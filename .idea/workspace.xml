@@ -4,7 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c0a884c6-b90b-4b8b-a811-3ed8eb767e75" name="Changes" comment="initial commit&#10;&#10;# Conflicts:&#10;#&#9;.idea/workspace.xml&#10;#&#9;main_notebook.ipynb">
+    <list default="true" id="c0a884c6-b90b-4b8b-a811-3ed8eb767e75" name="Changes" comment="LD_SLSQP converging">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main_notebook.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/main_notebook.ipynb" afterDir="false" />
     </list>
@@ -16,18 +16,18 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
-  "lastFilter": {
-    "state": "OPEN",
-    "assignee": "Forcasion"
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;Forcasion&quot;
   }
-}]]></component>
-  <component name="GithubPullRequestsUISettings"><![CDATA[{
-  "selectedUrlAndAccountId": {
-    "url": "https://github.com/Forcasion/QuantumMeasurementSimulationOptimization",
-    "accountId": "3c24aa2c-acb7-443e-a920-e5c0ae6dc2bc"
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/Forcasion/QuantumMeasurementSimulationOptimization&quot;,
+    &quot;accountId&quot;: &quot;3c24aa2c-acb7-443e-a920-e5c0ae6dc2bc&quot;
   }
-}]]></component>
+}</component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 3
 }</component>
@@ -39,8 +39,11 @@
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
     "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
     "git-widget-placeholder": "master",
+    "node.js.detected.package.eslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
     "node.js.selected.package.tslint": "(autodetect)",
     "settings.editor.selected.configurable": "org.jetbrains.plugins.github.ui.GithubSettingsConfigurable",
     "vue.rearranger.settings.migration": "true"
@@ -61,7 +64,17 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1771154971974</updated>
+      <workItem from="1771172457974" duration="2423000" />
     </task>
+    <task id="LOCAL-00001" summary="LD_SLSQP converging">
+      <option name="closed" value="true" />
+      <created>1771167979833</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1771167979833</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -80,6 +93,7 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="stable" />
-    <option name="LAST_COMMIT_MESSAGE" value="stable" />
+    <MESSAGE value="LD_SLSQP converging" />
+    <option name="LAST_COMMIT_MESSAGE" value="LD_SLSQP converging" />
   </component>
 </project>
