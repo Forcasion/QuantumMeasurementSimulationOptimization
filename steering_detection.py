@@ -109,6 +109,36 @@ def measurement_basis(n_modes=1):
 
     return M_list
 
+def check_str_feasibility(M_list, state_g, num_ops, n_modes, upper_bound=100):
+    """Check if sTr >= 0.5 is achievable with current measurements."""
+    size = 2 * n_modes
+
+    # Maximum possible sTr with all weights at upper bound
+    W_max = np.sum([upper_bound * M_list[k] for k in range(num_ops)], axis=0)
+    Z1_max = W_max[0:size, 0:size]
+    Z2_max = W_max[size:2*size, size:2*size]
+    max_sTr = symplectic_values(Z1_max) + symplectic_values(Z2_max)
+
+    # Minimum possible sTr with all weights at zero
+    W_min = np.sum([0 * M_list[k] for k in range(num_ops)], axis=0)
+    Z1_min = W_min[0:size, 0:size]
+    Z2_min = W_min[size:2*size, size:2*size]
+    min_sTr = symplectic_values(Z1_min) + symplectic_values(Z2_min)
+
+    # sTr of target state itself
+    Z1_g = state_g[0:size, 0:size]
+    Z2_g = state_g[size:2*size, size:2*size]
+    sTr_g = symplectic_values(Z1_g) + symplectic_values(Z2_g)
+
+    print("=" * 50)
+    print("sTr Feasibility Check")
+    print("=" * 50)
+    print(f"sTr of target state g:        {sTr_g:.6f}")
+    print(f"sTr range with w in [0, {upper_bound}]:  [{min_sTr:.6f}, {max_sTr:.6f}]")
+    print(f"Required sTr >= 0.5:          {'[OK]' if max_sTr >= 0.5 else '[INFEASIBLE]'}")
+    print("=" * 50)
+
+    return max_sTr >= 0.5
 
 def qmult_unit(n):
     """Generates a Haar-random unitary matrix of size n"""
@@ -211,6 +241,34 @@ def randCM(entg=1, n_modes=1):
 
     return None
 
+
+def separableCM(n_modes=1):
+    """Generate a separable (non-entangled) Gaussian covariance matrix.
+    A product state: no correlations between Alice and Bob.
+    Each party gets an independent thermal state with random symplectic transformation.
+    """
+    total_modes = 2 * n_modes
+    size = 4 * n_modes
+
+    # Independent thermal states for Alice and Bob
+    d_alice = 1.0 + np.random.rand(n_modes) * 0.5
+    d_bob   = 1.0 + np.random.rand(n_modes) * 0.5
+
+    g_alice = np.diag(np.repeat(d_alice, 2))
+    g_bob   = np.diag(np.repeat(d_bob, 2))
+
+    # Random symplectic on each party independently
+    S_alice = rand_rsymp(n_modes, 1.0 + np.random.rand(n_modes) * 5)
+    S_bob   = rand_rsymp(n_modes, 1.0 + np.random.rand(n_modes) * 5)
+
+    cm_alice = S_alice.T @ g_alice @ S_alice
+    cm_bob   = S_bob.T @ g_bob   @ S_bob
+
+    # Block diagonal — no Alice-Bob correlations
+    cm = block_diag(cm_alice, cm_bob)
+
+    return cm
+
 def check_constraints(w_opt, M_list, min_val, num_ops=14, n_modes=1, verbose=False):
     """
     Verify all constraints are satisfied.
@@ -289,6 +347,8 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
         if grad.size > 0:
             for k in range(num_ops):
                 grad[k] = -float(np.real(v_min.conj().T @ M_list[k] @ v_min))
+
+        # print(f"  PSD constraint: {float(1e-9 - min_eigval):.6f}")
         return float(1e-9 - min_eigval)
 
     def constraint_symplectic_trace(w, grad):
@@ -298,8 +358,8 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
         Z2 = W[size:2*size, size:2*size]
         
         # Buffer to ensure Z is definitely PSD
-        Z1_r = (Z1 + Z1.T) / 2.0 + 1e-7 * np.eye(size)
-        Z2_r = (Z2 + Z2.T) / 2.0 + 1e-7 * np.eye(size)
+        Z1_r = (Z1 + Z1.T) / 2.0
+        Z2_r = (Z2 + Z2.T) / 2.0
         
         try:
             if n_modes == 1:
@@ -313,6 +373,8 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
                         dk1 = np.trace(g1 @ M_list[k][0:2, 0:2])
                         dk2 = np.trace(g2 @ M_list[k][2:4, 2:4])
                         grad[k] = -float(dk1 + dk2)
+                        # print(f"  grad norm: {np.linalg.norm(grad):.6e}")
+
             else:
                 S1, S2 = get_S(Z1_r), get_S(Z2_r)
                 sTr1 = np.sum(np.diag(S1 @ Z1_r @ S1.T)[::2])
@@ -325,6 +387,7 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
                         grad[k] = -float(dk1 + dk2)
             
             if np.isnan(val) or np.isinf(val): return 10.0
+            # print(f"  sTr constraint: {val:.6f}")
             return float(val)
         except:
             if grad.size > 0: grad[:] = 0
@@ -334,17 +397,35 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
         val = np.dot(w, m_list) - 0.999
         if grad.size > 0:
             grad[:] = m_list
+        # print(f"  steering constraint: {val:.6f}")
         return float(val)
 
-    opt = nlopt.opt(nlopt.LD_SLSQP, num_ops)
+    opt = nlopt.opt(nlopt.LD_SLSQP, num_ops)  # sequential quadratic programming
+    # opt = nlopt.opt(nlopt.LD_MMA, num_ops)  # method of moving asymptotes
+    # opt = nlopt.opt(nlopt.LD_CCSAQ, num_ops)  # conservative convex separable approximation
+    # opt = nlopt.opt(nlopt.LD_LBFGS, num_ops)  # limited memory BFGS
+    # opt = nlopt.opt(nlopt.LD_TNEWTON, num_ops)  # truncated Newton
+    # opt = nlopt.opt(nlopt.LD_TNEWTON_RESTART, num_ops)  # truncated Newton with restarts
+    # opt = nlopt.opt(nlopt.LD_VAR1, num_ops)  # shifted limited memory variable metric rank 1
+    # opt = nlopt.opt(nlopt.LD_VAR2, num_ops)  # shifted limited memory variable metric rank 2
+    # opt = nlopt.opt(nlopt.LD_AUGLAG, num_ops)  # augmented Lagrangian (needs sub-optimizer)
+    # sub_opt = nlopt.opt(nlopt.LD_LBFGS, num_ops)
+    # opt.set_local_optimizer(sub_opt)
+    # opt = nlopt.opt(nlopt.LN_COBYLA, num_ops)  # linear approximation, good for constraints
+    # opt = nlopt.opt(nlopt.LN_BOBYQA, num_ops)  # quadratic approximation, bound constraints
+    # opt = nlopt.opt(nlopt.LN_NEWUOA, num_ops)  # quadratic approximation, unconstrained
+    # opt = nlopt.opt(nlopt.LN_PRAXIS, num_ops)  # principal axis method
+    # opt = nlopt.opt(nlopt.LN_NELDERMEAD, num_ops)  # Nelder-Mead simplex
+    # opt = nlopt.opt(nlopt.LN_SBPLX, num_ops)  # subplex, more robust than Nelder-Mead
+
     opt.set_min_objective(objective)
-    opt.set_stopval(0.999)
+    # opt.set_stopval(0.999)
     opt.add_inequality_constraint(constraint_W_psd, 1e-10)
     opt.add_inequality_constraint(constraint_symplectic_trace, 1e-10)
     opt.add_inequality_constraint(constraint_steering, 1e-6)
-    opt.set_lower_bounds(-10 * np.ones(num_ops))
-    opt.set_upper_bounds(10 * np.ones(num_ops))
-    opt.set_xtol_rel(1e-6)
+    opt.set_lower_bounds(np.zeros(num_ops))
+    opt.set_upper_bounds(100 * np.ones(num_ops))
+    opt.set_xtol_rel(1e-8)
     opt.set_maxeval(20000)
 
     # Multi-start logic for robustness: Zeros, then Random, then 'Safe Start' (identity-like)
@@ -352,13 +433,13 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
     best_obj = np.inf
     
     # Construct diverse seeds
-    seed_safe = np.ones(num_ops) * 0.05
+    w0 = np.ones(num_ops) * (1.0 / num_ops)
+
     seeds = [
-        np.zeros(num_ops), 
-        seed_safe, 
-        np.random.randn(num_ops) * 0.01,
-        np.random.randn(num_ops) * 0.1,
-        np.ones(num_ops) * -0.05
+        w0,  # feasible, uniform
+        w0 * 2,  # feasible, larger
+        np.abs(np.random.randn(num_ops)) * 0.1,  # feasible, random positive
+        np.abs(np.random.randn(num_ops)) * 0.5,
     ]
     
     for w0 in seeds:
@@ -371,7 +452,7 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
                 if res['W_is_PSD'] and res['sTr_satisfied']:
                     best_obj = obj
                     best_w = w_res
-            if best_obj < 0.999: break # Found a solid witness
+            # if best_obj < 0.999: break # Found a solid witness
         except:
             continue
             
@@ -385,7 +466,7 @@ if __name__ == "__main__":
     args, _ = parser.parse_known_args()
     n_modes = args.n_modes
     # parser.add_argument("-no", "--num_ops", type=int, default=2*n_modes*(4*n_modes+1), help="Number of measurement operators (default: 2n(2n+1); n=modes)")
-    parser.add_argument("-no", "--num_ops", type=int, default=20, help="Number of measurement operators (default: 2n(2n+1); n=modes)")
+    parser.add_argument("-no", "--num_ops", type=int, default=10, help="Number of measurement operators (default: 2n(2n+1); n=modes)")
 
     args = parser.parse_args()
 
@@ -408,7 +489,8 @@ if __name__ == "__main__":
     # print(f"Condition number of M: {np.linalg.cond(M_matrix):.2e}")
     # input()
 
-    max_attempts = 20
+    # check_str_feasibility(M_list, state_g, num_ops, n_modes, upper_bound=100)
+    max_attempts = 10
     for attempt in range(max_attempts):
         # Run optimization
         print(f"Attempt {attempt+1} ({num_ops} operators): Running optimization with new random measurements...")
