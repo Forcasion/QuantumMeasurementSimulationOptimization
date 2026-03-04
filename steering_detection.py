@@ -5,6 +5,7 @@ import math
 import random
 from scipy.linalg import block_diag, expm
 from numpy import *
+import argparse
 
 def get_S(Z):
     """
@@ -19,20 +20,21 @@ def get_S(Z):
     Omega = block_diag(*([J] * n))
 
     # 2. Ensure Z is symmetric and regularized (robust to singular matrices)
-    Z = (Z + Z.T) / 2 + 1e-12 * np.eye(size)
-    
+    # Optional, but it helps sometimes
+    # Z = (Z + Z.T) / 2 + 1e-12 * np.eye(size)
+
     # 3. Williamson decomposition:
     # Symplectic eigenvalues are eigenvalues of A = i * Omega @ Z
     A = 1j * Omega @ Z
     vals, vecs = np.linalg.eig(A)
-    
+
     # Positive eigenvalues (d_k) and their eigenvectors
     # Sort by real parts descending. For PSD Z, they should be +/- d_k.
     # We take the n largest (one from each pair).
     sort_idx = np.argsort(vals.real)[::-1]
     d_ks = vals[sort_idx[:n]].real
     vecs_pos = vecs[:, sort_idx[:n]]
-    
+
     # 4. Construct S such that S Z S^T = D
     # Normalize v_k such that v_k^H (i Omega) v_k = 2
     # Then the rows of S are interleaved: Im(v_k)^T and Re(v_k)^T
@@ -41,17 +43,16 @@ def get_S(Z):
         v = vecs_pos[:, i]
         # Normalize: v^H (i Omega) v = 2
         norm = np.real(v.conj().T @ (1j * Omega) @ v)
-        # Safety for zero norm due to precision
-        norm = np.maximum(1e-16, np.abs(norm))
-        v = v * np.sqrt(2.0 / norm)
+        # Numerical safety: ensure norm is not zero before division
+        v = v * np.sqrt(2.0 / (np.abs(norm) + 1e-16))
         
         # Phase fixing for numerical stability: force first non-zero element to be real-positive
-        # This keeps the gradient from jumping around due to eigenvector phase choice.
-        first_nonzero = v[np.argmax(np.abs(v) > 1e-10)]
-        if np.abs(first_nonzero) > 0:
-            v = v * (np.conj(first_nonzero) / np.abs(first_nonzero))
+        abs_v = np.abs(v)
+        if np.max(abs_v) > 1e-12:
+            first_idx = np.argmax(abs_v > 1e-12)
+            first_nonzero = v[first_idx]
+            v = v * (np.conj(first_nonzero) / (np.abs(first_nonzero) + 1e-18))
         
-        # S rows for interleaved basis [x1, y1, x2, y2, ...]
         rows.append(np.imag(v).T)
         rows.append(np.real(v).T)
         
@@ -71,19 +72,43 @@ def symplectic_values(Z):
     values = np.diag(result)[::2]
     return np.sum(values)
 
-def measurement(theta, psi, phi):
-    """Return the measurement for specific angles
 
-    Parameters:
-        theta: theta angle in [0,pi]
-        psi: psi angle in [0,pi]
-        z: phi angle in [0,2pi]
-    Returns:
-        A 4x4 numpy array
-    """
-    u=np.matrix([math.cos(theta)*math.cos(psi-phi), math.cos(theta)*math.sin(psi-phi), math.sin(theta)*math.cos(psi), math.sin(theta)*math.sin(psi)])
-    v=np.matrix([math.cos(theta)*math.cos(psi-phi),math.cos(theta)*math.sin(psi-phi),math.sin(theta)*math.cos(psi),math.sin(theta)*math.sin(psi)])
-    return np.outer(u,v.T)
+def measurement(n_modes=1, num_ops=None):
+    """Return a list of random rank-1 measurements for 2*n_modes system."""
+    size = 4 * n_modes
+    if num_ops is None:
+        num_ops = 2 * n_modes * (4 * n_modes + 1)  # default same as argparse
+
+    M_list = []
+    for _ in range(num_ops):
+        u = np.random.randn(size)
+        u /= (np.linalg.norm(u) + 1e-16)
+        M_list.append(np.outer(u, u))
+
+    return M_list
+
+
+def measurement_basis(n_modes=1):
+    """Generate a complete, well-conditioned basis of measurement operators."""
+    size = 4 * n_modes
+    M_list = []
+
+    # Diagonal basis: e_i e_i^T
+    for i in range(size):
+        u = np.zeros(size)
+        u[i] = 1.0
+        M_list.append(np.outer(u, u))
+
+    # Off-diagonal basis: (e_i + e_j)(e_i + e_j)^T / 2
+    for i in range(size):
+        for j in range(i + 1, size):
+            u = np.zeros(size)
+            u[i] = 1.0 / np.sqrt(2)
+            u[j] = 1.0 / np.sqrt(2)
+            M_list.append(np.outer(u, u))
+
+    return M_list
+
 
 def qmult_unit(n):
     """Generates a Haar-random unitary matrix of size n"""
@@ -127,76 +152,85 @@ def rand_rsymp(n,c):
 
     return U @ np.diag(s) @ V
 
-def randCM(entg = 1):
-    """Searches for a random state with a specific entanglement level
+def randCM(entg=1, n_modes=1):
+    """Searches for a random state with a specific entanglement level for 2*n_modes.
     Parameters:
         entg: entanglement level
+        n_modes: number of modes per party
     Returns:
-        A 4x4 matrix
+        A (4*n_modes x 4*n_modes) covariance matrix in interleaved convention
+        [x1_A, p1_A, x1_B, p1_B, x2_A, p2_A, x2_B, p2_B, ...]
     """
-    int_val = 5
+    total_modes = 2 * n_modes
+    size = 4 * n_modes
+    num = 100000
     rot = 10
-    num = 300000
+    int_factor = 5
 
-    P = np.matrix([[1,0,0,0],
-                  [0,0,1,0],
-                  [0,1,0,0],
-                  [0,0,0,1]])
+    # Build interleaving permutation matrix
+    # Converts split convention [x1_A, x1_B, ..., p1_A, p1_B, ...]
+    # to interleaved convention [x1_A, p1_A, x1_B, p1_B, ...]
+    P = np.zeros((size, size))
+    for i in range(n_modes):
+        P[4*i,   2*i]            = 1  # Alice x_i
+        P[4*i+1, 2*n_modes+2*i]  = 1  # Alice p_i
+        P[4*i+2, 2*i+1]          = 1  # Bob x_i
+        P[4*i+3, 2*n_modes+2*i+1]= 1  # Bob p_i
 
-    x = 1
-    y = 1.1
+    for _ in range(num):
+        # Generate thermal state CM in split convention
+        d_vals = 1.0 + np.random.rand(total_modes) * 0.5
+        g_diag = np.diag(np.repeat(d_vals, 2))
 
-    a=1
-    b=10
+        # Apply random symplectic
+        S = rand_rsymp(total_modes, 1.0 + np.random.rand(total_modes) * 5)
+        g3 = S.T @ g_diag @ S
 
-    for i in range(num):
-        # generate thermal state CM
-        g1 = np.matrix([[random.uniform(x,y),0],
-                        [0,random.uniform(x,y)]])
-        g2 = block_diag(g1, g1)
+        # Apply permutation to get interleaved convention
+        cm = P.T @ g3 @ P
 
-        # generate random symplectic transformations with symplectic eigenvalues between 1 and 7.5
-        S=rand_rsymp(2,(random.uniform(a,b),random.uniform(a,b)))
-        # apply symplectic transformations to obtain a general CM
-
-        g3 = S.transpose()@g2@S
-        cm = P.transpose()@g3@P
-
-        # calculate the logarithmic negativity
+        # Logarithmic negativity check
         det_11 = np.linalg.det(cm[0:2, 0:2])
         det_22 = np.linalg.det(cm[2:4, 2:4])
         det_12 = np.linalg.det(cm[0:2, 2:4])
         det_cm = np.linalg.det(cm)
 
         f = (0.5 * (det_11 + det_22) - det_12
-             - np.sqrt((0.5 * (det_11 + det_22) - det_12)**2 - det_cm))
+             - np.sqrt(np.maximum(0, (0.5 * (det_11 + det_22) - det_12)**2 - det_cm)))
 
-        EN = -0.5 * np.log2(f)
-        EN1 = np.round(EN * rot) / rot
+        EN = -0.5 * np.log2(np.maximum(1e-10, f))
+        EN_rounded = np.round(EN * rot) / rot
 
-        if EN1 == entg/int_val:
+        if n_modes == 1:
+            if EN_rounded == entg / int_factor:
+                return cm
+        else:
+            # For n_modes > 1, log negativity across the Alice/Bob bipartition
+            # needs a proper PPT check — for now just return a valid CM
             return cm
+
     return None
 
-def check_constraints(w_opt, M_list, min_val, num_ops=14, verbose=False):
+def check_constraints(w_opt, M_list, min_val, num_ops=14, n_modes=1, verbose=False):
     """
     Verify all constraints are satisfied.
     """
     W = np.sum([w_opt[k] * M_list[k] for k in range(num_ops)], axis=0)
+    size = 2 * n_modes
 
     # Check 1: W ≥ 0 (PSD)
     eigvals = np.linalg.eigvalsh(W)
     min_eigval = np.min(np.real(eigvals))
     W_psd = min_eigval >= -1e-9
 
-    # Check 2: sTr(Z11) + sTr(Z22) ≥ 0.5
-    Z11 = W[0:2, 0:2]
-    Z22 = W[2:4, 2:4]
+    # Check 2: sTr(Z1) + sTr(Z2) ≥ 0.5
+    Z1 = W[0:size, 0:size]
+    Z2 = W[size:2*size, size:2*size]
 
-    sTr_Z11 = symplectic_values(Z11)
-    sTr_Z22 = symplectic_values(Z22)
+    sTr_Z1 = symplectic_values(Z1)
+    sTr_Z2 = symplectic_values(Z2)
 
-    sTr_sum = sTr_Z11 + sTr_Z22
+    sTr_sum = sTr_Z1 + sTr_Z2
     sTr_satisfied = sTr_sum >= 0.5 - 1e-7
 
     steering_ok = min_val < 1.0 - 1e-7
@@ -227,29 +261,15 @@ def check_constraints(w_opt, M_list, min_val, num_ops=14, verbose=False):
 
     return results
 
-def steering_detection(M_list, m_list, num_ops=14):
+def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
     """
-    Detect steering using NLopt with specific constraints
-
-    Constraints:
-    - W ≥ 0 (PSD)
-    - sTr(Z11) + sTr(Z22) ≥ 0.5
-    - w·m < 1 (Steering condition added as constraint)
+    Detect steering using a robust direct optimizer.
     """
-    n_vars = num_ops
-    
-    # Tracking variables for progress in a mutable dict
-    stats = {
-        'eval': 0, 
-        'best_obj': np.inf, 
-        'best_v': np.inf, 
-        'v1': 0, 'v2': 0, 'v3': 0,
-        'best_feasible_w': None,
-        'best_feasible_obj': np.inf
-    }
+    size = 2 * n_modes
+    stats = {'eval': 0}
 
-    # Directly solve the non-linear optimization using smooth determinants for 2x2 blocks.
     def objective(w, grad):
+        w = np.nan_to_num(w, nan=0.0)
         obj = np.dot(w, m_list)
         if grad.size > 0:
             grad[:] = m_list
@@ -259,7 +279,9 @@ def steering_detection(M_list, m_list, num_ops=14):
         return float(obj)
 
     def constraint_W_psd(w, grad):
-        W = np.sum([w[k] * M_list[k] for k in range(num_ops)], axis=0)
+        w = np.nan_to_num(w, nan=0.0)
+        W = np.sum([w[idx] * M_list[idx] for idx in range(num_ops)], axis=0)
+        W = (W + W.T) / 2.0
         eigvals, eigvecs = np.linalg.eigh(W)
         min_idx = np.argmin(eigvals)
         min_eigval = eigvals[min_idx]
@@ -267,38 +289,46 @@ def steering_detection(M_list, m_list, num_ops=14):
         if grad.size > 0:
             for k in range(num_ops):
                 grad[k] = -float(np.real(v_min.conj().T @ M_list[k] @ v_min))
-        # Require min_eigval >= 1e-8 to avoid -0.0000 displaying
-        return float(1e-10 - min_eigval)
+        return float(1e-9 - min_eigval)
 
     def constraint_symplectic_trace(w, grad):
-        W = np.sum([w[k] * M_list[k] for k in range(num_ops)], axis=0)
-        Z1 = W[0:2, 0:2]
-        Z2 = W[2:4, 2:4]
+        w = np.nan_to_num(w, nan=0.0)
+        W = np.sum([w[idx] * M_list[idx] for idx in range(num_ops)], axis=0)
+        Z1 = W[0:size, 0:size]
+        Z2 = W[size:2*size, size:2*size]
         
-        # For 2x2 blocks, sTr(Z) = sqrt(det(Z))
-        # Ensure Z is regularized for safe determinant
-        # W constraint ensures Z is PSD, but we add epsilon for numerical stability
-        det1 = np.linalg.det(Z1 + 1e-12 * np.eye(2))
-        det2 = np.linalg.det(Z2 + 1e-12 * np.eye(2))
-        sTr1 = np.sqrt(np.maximum(1e-18, det1))
-        sTr2 = np.sqrt(np.maximum(1e-18, det2))
+        # Buffer to ensure Z is definitely PSD
+        Z1_r = (Z1 + Z1.T) / 2.0 + 1e-7 * np.eye(size)
+        Z2_r = (Z2 + Z2.T) / 2.0 + 1e-7 * np.eye(size)
         
-        val = 0.5 - (sTr1 + sTr2)
-        
-        if grad.size > 0:
-            # Gradient of sqrt(det(Z)) is 0.5 * sqrt(det(Z)) * Z^-1
-            inv1 = np.linalg.inv(Z1 + 1e-12 * np.eye(2))
-            inv2 = np.linalg.inv(Z2 + 1e-12 * np.eye(2))
-            g_Z1 = 0.5 * sTr1 * inv1
-            g_Z2 = 0.5 * sTr2 * inv2
+        try:
+            if n_modes == 1:
+                det1, det2 = np.linalg.det(Z1_r), np.linalg.det(Z2_r)
+                sTr1, sTr2 = np.sqrt(np.maximum(1e-18, det1)), np.sqrt(np.maximum(1e-18, det2))
+                val = 0.5 - (sTr1 + sTr2)
+                if grad.size > 0:
+                    inv1, inv2 = np.linalg.inv(Z1_r), np.linalg.inv(Z2_r)
+                    g1, g2 = 0.5 * sTr1 * inv1, 0.5 * sTr2 * inv2
+                    for k in range(num_ops):
+                        dk1 = np.trace(g1 @ M_list[k][0:2, 0:2])
+                        dk2 = np.trace(g2 @ M_list[k][2:4, 2:4])
+                        grad[k] = -float(dk1 + dk2)
+            else:
+                S1, S2 = get_S(Z1_r), get_S(Z2_r)
+                sTr1 = np.sum(np.diag(S1 @ Z1_r @ S1.T)[::2])
+                sTr2 = np.sum(np.diag(S2 @ Z2_r @ S2.T)[::2])
+                val = 0.5 - (sTr1 + sTr2)
+                if grad.size > 0:
+                    for k in range(num_ops):
+                        dk1 = np.sum(np.diag(S1 @ M_list[k][0:size, 0:size] @ S1.T)[::2])
+                        dk2 = np.sum(np.diag(S2 @ M_list[k][size:2*size, size:2*size] @ S2.T)[::2])
+                        grad[k] = -float(dk1 + dk2)
             
-            for k in range(num_ops):
-                # Chain rule: Tr(grad_Z^T * M_k)
-                # Since grad_Z is symmetric, it's Tr(grad_Z * M_k)
-                dk1 = np.trace(g_Z1 @ M_list[k][0:2, 0:2])
-                dk2 = np.trace(g_Z2 @ M_list[k][2:4, 2:4])
-                grad[k] = -float(dk1 + dk2)
-        return float(val)
+            if np.isnan(val) or np.isinf(val): return 10.0
+            return float(val)
+        except:
+            if grad.size > 0: grad[:] = 0
+            return 10.0
 
     def constraint_steering(w, grad):
         val = np.dot(w, m_list) - 0.999
@@ -306,101 +336,132 @@ def steering_detection(M_list, m_list, num_ops=14):
             grad[:] = m_list
         return float(val)
 
-    # Initial Guess
-    w0 = np.random.randn(num_ops)
-    
-    # Configure Optimizer
     opt = nlopt.opt(nlopt.LD_SLSQP, num_ops)
     opt.set_min_objective(objective)
     opt.set_stopval(0.999)
     opt.add_inequality_constraint(constraint_W_psd, 1e-10)
     opt.add_inequality_constraint(constraint_symplectic_trace, 1e-10)
     opt.add_inequality_constraint(constraint_steering, 1e-6)
-    opt.set_lower_bounds(-50 * np.ones(num_ops))
-    opt.set_upper_bounds(50 * np.ones(num_ops))
-    opt.set_xtol_rel(1e-7)
-    opt.set_maxeval(100000)
+    opt.set_lower_bounds(-10 * np.ones(num_ops))
+    opt.set_upper_bounds(10 * np.ones(num_ops))
+    opt.set_xtol_rel(1e-6)
+    opt.set_maxeval(20000)
 
-    try:
-        w_opt = opt.optimize(w0)
-        min_value = opt.last_optimum_value()
-        if stats['eval'] >= 500: print()
-        return min_value, w_opt
-    except Exception as e:
-        if stats['eval'] >= 500: print()
-        print(f"  Optimization failed: {e}")
-        return np.inf, None
+    # Multi-start logic for robustness: Zeros, then Random, then 'Safe Start' (identity-like)
+    best_w = None
+    best_obj = np.inf
+    
+    # Construct diverse seeds
+    seed_safe = np.ones(num_ops) * 0.05
+    seeds = [
+        np.zeros(num_ops), 
+        seed_safe, 
+        np.random.randn(num_ops) * 0.01,
+        np.random.randn(num_ops) * 0.1,
+        np.ones(num_ops) * -0.05
+    ]
+    
+    for w0 in seeds:
+        try:
+            w_res = opt.optimize(w0)
+            obj = opt.last_optimum_value()
+            if obj < best_obj:
+                # Check if feasible before accepting
+                res = check_constraints(w_res, M_list, obj, num_ops, n_modes)
+                if res['W_is_PSD'] and res['sTr_satisfied']:
+                    best_obj = obj
+                    best_w = w_res
+            if best_obj < 0.999: break # Found a solid witness
+        except:
+            continue
+            
+    if stats['eval'] >= 500: print()
+    return best_obj, best_w
 
 if __name__ == "__main__":
-    # Main detection loop
-    num_ops = 14
-    entanglement_target = 1  # Target entanglement level
+    parser = argparse.ArgumentParser(description="Quantum Steering Detection")
+    parser.add_argument("-nm", "--n_modes", type=int, default=1, help="Number of modes per block (default: 1)")
+    parser.add_argument("-e", "--entanglement", type=int, default=1, help="Target entanglement level (default: 1)")
+    args, _ = parser.parse_known_args()
+    n_modes = args.n_modes
+    # parser.add_argument("-no", "--num_ops", type=int, default=2*n_modes*(4*n_modes+1), help="Number of measurement operators (default: 2n(2n+1); n=modes)")
+    parser.add_argument("-no", "--num_ops", type=int, default=20, help="Number of measurement operators (default: 2n(2n+1); n=modes)")
 
-    print(f"Searching for steering witness for state with entanglement level {entanglement_target}...")
+    args = parser.parse_args()
+
+    entanglement_target = args.entanglement
+    num_ops = args.num_ops
+    print(f"Searching for steering witness for {n_modes}-mode state with entanglement level {entanglement_target}...")
 
     # Generate target state once
     while True:
-        state_g = randCM(entanglement_target)
+        state_g = randCM(entanglement_target, n_modes)
         if state_g is not None:
             break
         print("  ...generating new state")
 
-    attempt = 0
-    while True:
-        attempt += 1
-        # Generate random measurements
-        theta = np.pi * np.random.rand(num_ops)
-        psi = np.pi * np.random.rand(num_ops)
-        phi = 2 * np.pi * np.random.rand(num_ops)
+    M_list = measurement(n_modes)  # generate basis once outside the attempt loop
+    m_list = [np.real(np.trace(M @ state_g)) for M in M_list]
+    num_ops = len(M_list)
 
-        M_list = []
-        m_list = []
+    # M_matrix = np.array(M_list).reshape(num_ops, -1)
+    # print(f"Condition number of M: {np.linalg.cond(M_matrix):.2e}")
+    # input()
 
-        for idx in range(num_ops):
-            M = measurement(theta[idx], psi[idx], phi[idx])
-            M_list.append(M)
-            m_list.append(np.real(np.trace(M @ state_g)))
-
+    max_attempts = 20
+    for attempt in range(max_attempts):
         # Run optimization
-        print(f"Attempt {attempt}: Running optimization with new random measurements...")
-        min_val, w_opt = steering_detection(M_list, m_list, num_ops)
+        print(f"Attempt {attempt+1} ({num_ops} operators): Running optimization with new random measurements...")
+        min_val, w_opt = steering_detection(M_list, m_list, num_ops, n_modes)
         
         if w_opt is not None:
             # Check constraints carefully
-            # Set verbose=True to see why near-misses are occurring
-            results = check_constraints(w_opt, M_list, min_val, num_ops, True)
+            results = check_constraints(w_opt, M_list, min_val, num_ops, n_modes, True)
             
             # Check if steering detected
             if results['all_constraints_ok']:
-                print(f"\nSUCCESS! Steering detected on attempt {attempt}!")
+                print(f"\nSUCCESS! Steering detected on attempt {attempt+1}!")
                 print(f"Final value: {min_val:.6f}")
                 
                 # Calculate and print diagonalized matrices for verification
                 W_opt = np.sum([w_opt[k] * M_list[k] for k in range(num_ops)], axis=0)
-                Z11 = W_opt[0:2, 0:2]
-                Z22 = W_opt[2:4, 2:4]
-                S1 = get_S(Z11)
-                S2 = get_S(Z22)
-                D1 = S1 @ Z11 @ S1.T
-                D2 = S2 @ Z22 @ S2.T
+                size = 2 * n_modes
+                Z1 = W_opt[0:size, 0:size]
+                Z2 = W_opt[size:2*size, size:2*size]
+                S1 = get_S(Z1)
+                S2 = get_S(Z2)
+                D1 = S1 @ Z1 @ S1.T
+                D2 = S2 @ Z2 @ S2.T
                 
-                print("\nVerification of Williamson Decomposition for optimal W:")
-                print("Diagonalized Z11 (S1 Z11 S1^T):")
-                print(np.array2string(D1, precision=4, suppress_small=True))
-                print("\nDiagonalized Z22 (S2 Z22 S2^T):")
-                print(np.array2string(D2, precision=4, suppress_small=True))
+                # print("\nVerification of Williamson Decomposition for optimal W:")
+                # print(f"Diagonalized Z1 ({size}x{size}):")
+                # print(np.array2string(D1, precision=4, suppress_small=True))
+                # print(f"\nDiagonalized Z2 ({size}x{size}):")
+                # print(np.array2string(D2, precision=4, suppress_small=True))
                 
-                # Export weights to CSV
-                filename_w = f"steering_weights_ent{entanglement_target}.csv"
-                np.savetxt(filename_w, w_opt, delimiter=",", header="weight", comments="")
-                print(f"\nFinal weights exported to: {filename_w}")
-                
-                # Export S matrices to CSV
-                filename_s = f"symplectic_matrices_ent{entanglement_target}.csv"
-                # Stack them for easy export
-                S_stacked = np.vstack([S1, S2])
-                np.savetxt(filename_s, S_stacked, delimiter=",", header="S1 (top 2 rows), S2 (bottom 2 rows)", comments="")
-                print(f"Symplectic matrices exported to: {filename_s}")
+                # Export f function to CSV
+                f_values = w_opt * np.array(m_list)  # shape (num_ops,)
+                filename_f = f"output/f_values_nm{n_modes}_ent{entanglement_target}_ops{num_ops}.csv"
+                header = "k,w_k,m_k,f_k"
+                rows = np.column_stack([
+                    np.arange(num_ops),
+                    w_opt,
+                    np.array(m_list),
+                    f_values
+                ])
+                np.savetxt(filename_f, rows, delimiter=",", header=header, comments="")
+                print(f"f(c) values saved to: {filename_f}")
+
+                # Export Z matrices
+                filename_z = f"output/z_matrix_nm{n_modes}_ent{entanglement_target}_ops{num_ops}.csv"
+                np.savetxt(filename_z, W_opt, delimiter=",",
+                           header=f"Z ({2 * size}x{2 * size})", comments="")
+                print(f"Z matrix saved to: {filename_z}")
+
+                eigvals_z = np.linalg.eigvalsh(W_opt)
+                print(f"Z min eigenvalue: {np.min(eigvals_z):.6e}")
+                print(f"Z is PD: {np.all(eigvals_z > 0)}")
+
                 break
         
         print(f"  -> Current Result: {min_val:.6f} (No valid witness found yet)")
