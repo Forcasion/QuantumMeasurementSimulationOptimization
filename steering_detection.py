@@ -6,28 +6,68 @@ import random
 from scipy.linalg import block_diag, expm
 from numpy import *
 
-def symplectic_values(Z, A=None):
+def get_S(Z):
     """
-    Return the symplectic eigenvalues trace for Z using a random symplectic transformation.
-    The transformation S = exp(Omega @ A_symmetric) is independent of Z.
+    Find the symplectic transformation S such that S Z S^T = D,
+    where D = diag(d1, d1, d2, d2, ..., dn, dn).
     """
     size = len(Z)
     n = size // 2
-    
-    # Symplectic form Omega
-    Omega = np.zeros((size, size))
-    Omega[0:n, n:2*n] = np.eye(n)
-    Omega[n:2*n, 0:n] = -np.eye(n)
-    
-    if A is None:
-        A = np.random.randn(size, size)
-    
-    A_symmetric = (A + A.T) / 2
-    # Generator of symplectic group: Omega @ Symmetric
-    H = Omega @ A_symmetric
-    S = expm(H)
 
+    # 1. Standard interleaved Omega for [x1, y1, x2, y2, ...]
+    J = np.array([[0, 1], [-1, 0]])
+    Omega = block_diag(*([J] * n))
+
+    # 2. Ensure Z is symmetric and regularized (robust to singular matrices)
+    Z = (Z + Z.T) / 2 + 1e-12 * np.eye(size)
+    
+    # 3. Williamson decomposition:
+    # Symplectic eigenvalues are eigenvalues of A = i * Omega @ Z
+    A = 1j * Omega @ Z
+    vals, vecs = np.linalg.eig(A)
+    
+    # Positive eigenvalues (d_k) and their eigenvectors
+    # Sort by real parts descending. For PSD Z, they should be +/- d_k.
+    # We take the n largest (one from each pair).
+    sort_idx = np.argsort(vals.real)[::-1]
+    d_ks = vals[sort_idx[:n]].real
+    vecs_pos = vecs[:, sort_idx[:n]]
+    
+    # 4. Construct S such that S Z S^T = D
+    # Normalize v_k such that v_k^H (i Omega) v_k = 2
+    # Then the rows of S are interleaved: Im(v_k)^T and Re(v_k)^T
+    rows = []
+    for i in range(n):
+        v = vecs_pos[:, i]
+        # Normalize: v^H (i Omega) v = 2
+        norm = np.real(v.conj().T @ (1j * Omega) @ v)
+        # Safety for zero norm due to precision
+        norm = np.maximum(1e-16, np.abs(norm))
+        v = v * np.sqrt(2.0 / norm)
+        
+        # Phase fixing for numerical stability: force first non-zero element to be real-positive
+        # This keeps the gradient from jumping around due to eigenvector phase choice.
+        first_nonzero = v[np.argmax(np.abs(v) > 1e-10)]
+        if np.abs(first_nonzero) > 0:
+            v = v * (np.conj(first_nonzero) / np.abs(first_nonzero))
+        
+        # S rows for interleaved basis [x1, y1, x2, y2, ...]
+        rows.append(np.imag(v).T)
+        rows.append(np.real(v).T)
+        
+    S = np.vstack(rows)
+    
+    return S
+
+def symplectic_values(Z):
+    """
+    Return the sum of the symplectic eigenvalues for Z.
+    This is calculated exactly using the Williamson decomposition from get_S(Z).
+    """
+    S = get_S(Z)
     result = S @ Z @ S.T
+    # For interleaved diagonal D = diag(d1, d1, d2, d2, ...), 
+    # we sum d_k once for each pair.
     values = np.diag(result)[::2]
     return np.sum(values)
 
@@ -138,10 +178,9 @@ def randCM(entg = 1):
             return cm
     return None
 
-def check_constraints(w_opt, M_list, min_val, num_ops=14, verbose=False, A_list=None):
+def check_constraints(w_opt, M_list, min_val, num_ops=14, verbose=False):
     """
-    Verify all constraints are satisfied
-    A_list: optional list of [A1, A2] random matrices for symplectic_values
+    Verify all constraints are satisfied.
     """
     W = np.sum([w_opt[k] * M_list[k] for k in range(num_ops)], axis=0)
 
@@ -154,11 +193,8 @@ def check_constraints(w_opt, M_list, min_val, num_ops=14, verbose=False, A_list=
     Z11 = W[0:2, 0:2]
     Z22 = W[2:4, 2:4]
 
-    A1 = A_list[0] if A_list else None
-    A2 = A_list[1] if A_list else None
-
-    sTr_Z11 = symplectic_values(Z11, A1)
-    sTr_Z22 = symplectic_values(Z22, A2)
+    sTr_Z11 = symplectic_values(Z11)
+    sTr_Z22 = symplectic_values(Z22)
 
     sTr_sum = sTr_Z11 + sTr_Z22
     sTr_satisfied = sTr_sum >= 0.5 - 1e-7
@@ -212,149 +248,88 @@ def steering_detection(M_list, m_list, num_ops=14):
         'best_feasible_obj': np.inf
     }
 
-    # Objective function: sum(w*m)
+    # Directly solve the non-linear optimization using smooth determinants for 2x2 blocks.
     def objective(w, grad):
-        # Base objective
         obj = np.dot(w, m_list)
-        
-        # Calculate violations for progress reporting
-        # W PSD violation
-        W = np.sum([w[k] * M_list[k] for k in range(num_ops)], axis=0)
-        min_eigval = np.min(np.real(np.linalg.eigvalsh(W)))
-        v1 = float(np.max([0.0, -min_eigval]))
-        
-        # sTr violation
-        s_val = symplectic_values(W[0:2, 0:2], A1) + symplectic_values(W[2:4, 2:4], A2)
-        v2 = float(np.max([0.0, 0.5 - s_val]))
-        
-        # Steering violation
-        v3 = float(np.max([0.0, obj - 0.999]))
-        
-        max_v = float(np.max([v1, v2, v3]))
-        
-        # Store individual violations for diagnostic printing on failure
-        stats['v1'], stats['v2'], stats['v3'] = v1, v2, v3
-        
-        stats['eval'] += 1
-        
-        # Track best violation (how close we are to feasibility)
-        if max_v < stats['best_v']:
-            stats['best_v'] = max_v
-            
-        # Only track "best obj" if it's feasible-ish
-        # 1e-9 matches the threshold in check_constraints
-        if max_v < 1e-9:
-            if stats['best_feasible_w'] is None or obj < stats['best_feasible_obj']:
-                stats['best_feasible_w'] = w.copy()
-                stats['best_feasible_obj'] = obj
-            
-            if obj < stats['best_obj']:
-                stats['best_obj'] = obj
-            
-        if stats['eval'] % 500 == 0:
-            print(f"\r    Eval: {stats['eval']:7d} | Curr obj: {obj:10.6f} | Best obj: {stats['best_obj']:10.6f} | Curr Viol: {max_v:10.6f}", end="", flush=True)
-
         if grad.size > 0:
             grad[:] = m_list
+        stats['eval'] += 1
+        if stats['eval'] % 500 == 0:
+            print(f"\r    Eval: {stats['eval']:7d} | Obj: {obj:10.6f}", end="", flush=True)
         return float(obj)
 
-    # Pre-generate random matrices and fixed transformation components
-    A1 = np.random.randn(2, 2)
-    A2 = np.random.randn(2, 2)
-    
-    # Pre-calculate linear coefficients for sTr gradient
-    # Since sTr(S Z S.T) is linear in Z, sTr(sum w_k M_k) = sum w_k sTr(M_k)
-    sTr_coeffs = []
-    for k in range(num_ops):
-        val1 = symplectic_values(M_list[k][0:2, 0:2], A1)
-        val2 = symplectic_values(M_list[k][2:4, 2:4], A2)
-        sTr_coeffs.append(val1 + val2)
-    sTr_coeffs = np.array(sTr_coeffs)
-
-    # Constraint 1: W ≥ 0 (PSD) -> -min_eigval <= 0
     def constraint_W_psd(w, grad):
         W = np.sum([w[k] * M_list[k] for k in range(num_ops)], axis=0)
         eigvals, eigvecs = np.linalg.eigh(W)
         min_idx = np.argmin(eigvals)
         min_eigval = eigvals[min_idx]
         v_min = eigvecs[:, min_idx]
-
         if grad.size > 0:
-            # Derivative of lambda_min is v^T @ (dW/dw) @ v
-            # dW/dw_k is M_list[k]
-            # Constraint is -lambda_min, so grad is -v^T @ M_k @ v
             for k in range(num_ops):
                 grad[k] = -float(np.real(v_min.conj().T @ M_list[k] @ v_min))
-        return float(-min_eigval)
+        # Require min_eigval >= 1e-8 to avoid -0.0000 displaying
+        return float(1e-10 - min_eigval)
 
-    # Constraint 2: sTr(Z11) + sTr(Z22) ≥ 0.5 -> 0.5 - sTr_sum <= 0
     def constraint_symplectic_trace(w, grad):
-        sTr_sum = np.dot(w, sTr_coeffs)
-        val = 0.5 - sTr_sum
-
+        W = np.sum([w[k] * M_list[k] for k in range(num_ops)], axis=0)
+        Z1 = W[0:2, 0:2]
+        Z2 = W[2:4, 2:4]
+        
+        # For 2x2 blocks, sTr(Z) = sqrt(det(Z))
+        # Ensure Z is regularized for safe determinant
+        # W constraint ensures Z is PSD, but we add epsilon for numerical stability
+        det1 = np.linalg.det(Z1 + 1e-12 * np.eye(2))
+        det2 = np.linalg.det(Z2 + 1e-12 * np.eye(2))
+        sTr1 = np.sqrt(np.maximum(1e-18, det1))
+        sTr2 = np.sqrt(np.maximum(1e-18, det2))
+        
+        val = 0.5 - (sTr1 + sTr2)
+        
         if grad.size > 0:
-            # Gradient is -sTr_coeffs
-            grad[:] = -sTr_coeffs
+            # Gradient of sqrt(det(Z)) is 0.5 * sqrt(det(Z)) * Z^-1
+            inv1 = np.linalg.inv(Z1 + 1e-12 * np.eye(2))
+            inv2 = np.linalg.inv(Z2 + 1e-12 * np.eye(2))
+            g_Z1 = 0.5 * sTr1 * inv1
+            g_Z2 = 0.5 * sTr2 * inv2
+            
+            for k in range(num_ops):
+                # Chain rule: Tr(grad_Z^T * M_k)
+                # Since grad_Z is symmetric, it's Tr(grad_Z * M_k)
+                dk1 = np.trace(g_Z1 @ M_list[k][0:2, 0:2])
+                dk2 = np.trace(g_Z2 @ M_list[k][2:4, 2:4])
+                grad[k] = -float(dk1 + dk2)
         return float(val)
 
-    # Constraint 3: w·m < 1 (Steering condition) -> obj - 0.999 <= 0
     def constraint_steering(w, grad):
-        obj = np.dot(w, m_list)
-        val = obj - 0.999
+        val = np.dot(w, m_list) - 0.999
         if grad.size > 0:
             grad[:] = m_list
         return float(val)
 
-    # Set up optimizer
-    # LD_SLSQP is a robust gradient-based solver for nonlinear constraints.
-    # Alternatively LD_AUGLAG with LD_LBFGS.
-    opt = nlopt.opt(nlopt.LD_SLSQP, n_vars)
-
+    # Initial Guess
+    w0 = np.random.randn(num_ops)
+    
+    # Configure Optimizer
+    opt = nlopt.opt(nlopt.LD_SLSQP, num_ops)
     opt.set_min_objective(objective)
-    # Stop as soon as we find ANY steering witness
     opt.set_stopval(0.999)
-
-    # Add all constraints with tighter tolerances for physical constraints
     opt.add_inequality_constraint(constraint_W_psd, 1e-10)
     opt.add_inequality_constraint(constraint_symplectic_trace, 1e-10)
     opt.add_inequality_constraint(constraint_steering, 1e-6)
+    opt.set_lower_bounds(-50 * np.ones(num_ops))
+    opt.set_upper_bounds(50 * np.ones(num_ops))
+    opt.set_xtol_rel(1e-7)
+    opt.set_maxeval(100000)
 
-    # Set bounds
-    opt.set_lower_bounds(-20 * np.ones(n_vars))
-    opt.set_upper_bounds(20 * np.ones(n_vars))
-
-    # Set tolerances
-    opt.set_xtol_rel(1e-6)
-    opt.set_maxeval(1000000)
-
-    # Initial guess
-    w0 = np.random.randn(n_vars)
-
-    # Optimize
     try:
         w_opt = opt.optimize(w0)
         min_value = opt.last_optimum_value()
-        
-        # Double check if we found something better during search
-        if stats['best_feasible_w'] is not None and stats['best_feasible_obj'] < min_value:
-             return stats['best_feasible_obj'], stats['best_feasible_w'], [A1, A2]
-             
-        if stats['eval'] >= 100:
-            print() # New line after the progress print
-        return min_value, w_opt, [A1, A2]
+        if stats['eval'] >= 500: print()
+        return min_value, w_opt
     except Exception as e:
-        if stats['eval'] >= 100:
-            print() # New line after the progress print
-        
-        # RECOVERY: If we found a feasible solution during search, return it!
-        if stats['best_feasible_w'] is not None:
-            print(f"  Optimization ended with error ({e}), but RECOVERED a feasible solution found during search.")
-            return stats['best_feasible_obj'], stats['best_feasible_w'], [A1, A2]
-
+        if stats['eval'] >= 500: print()
         print(f"  Optimization failed: {e}")
-        # Print a sample of the violation values on failure
-        print(f"    Sample violations at failure -> PSD: {stats['v1']:.6f}, sTr: {stats['v2']:.6f}, Steering: {stats['v3']:.6f}")
-        return np.inf, None, None
+        return np.inf, None
 
 if __name__ == "__main__":
     # Main detection loop
@@ -388,23 +363,44 @@ if __name__ == "__main__":
 
         # Run optimization
         print(f"Attempt {attempt}: Running optimization with new random measurements...")
-        min_val, w_opt, A_list = steering_detection(M_list, m_list, num_ops)
+        min_val, w_opt = steering_detection(M_list, m_list, num_ops)
         
         if w_opt is not None:
             # Check constraints carefully
             # Set verbose=True to see why near-misses are occurring
-            results = check_constraints(w_opt, M_list, min_val, num_ops, True, A_list)
+            results = check_constraints(w_opt, M_list, min_val, num_ops, True)
             
             # Check if steering detected
             if results['all_constraints_ok']:
                 print(f"\nSUCCESS! Steering detected on attempt {attempt}!")
                 print(f"Final value: {min_val:.6f}")
-                # Detailed check is already printed because of verbose=True above
+                
+                # Calculate and print diagonalized matrices for verification
+                W_opt = np.sum([w_opt[k] * M_list[k] for k in range(num_ops)], axis=0)
+                Z11 = W_opt[0:2, 0:2]
+                Z22 = W_opt[2:4, 2:4]
+                S1 = get_S(Z11)
+                S2 = get_S(Z22)
+                D1 = S1 @ Z11 @ S1.T
+                D2 = S2 @ Z22 @ S2.T
+                
+                print("\nVerification of Williamson Decomposition for optimal W:")
+                print("Diagonalized Z11 (S1 Z11 S1^T):")
+                print(np.array2string(D1, precision=4, suppress_small=True))
+                print("\nDiagonalized Z22 (S2 Z22 S2^T):")
+                print(np.array2string(D2, precision=4, suppress_small=True))
                 
                 # Export weights to CSV
-                filename = f"steering_weights_ent{entanglement_target}.csv"
-                np.savetxt(filename, w_opt, delimiter=",", header="weight", comments="")
-                print(f"Final weights exported to: {filename}")
+                filename_w = f"steering_weights_ent{entanglement_target}.csv"
+                np.savetxt(filename_w, w_opt, delimiter=",", header="weight", comments="")
+                print(f"\nFinal weights exported to: {filename_w}")
+                
+                # Export S matrices to CSV
+                filename_s = f"symplectic_matrices_ent{entanglement_target}.csv"
+                # Stack them for easy export
+                S_stacked = np.vstack([S1, S2])
+                np.savetxt(filename_s, S_stacked, delimiter=",", header="S1 (top 2 rows), S2 (bottom 2 rows)", comments="")
+                print(f"Symplectic matrices exported to: {filename_s}")
                 break
         
         print(f"  -> Current Result: {min_val:.6f} (No valid witness found yet)")
