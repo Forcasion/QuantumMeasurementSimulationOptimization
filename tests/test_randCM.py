@@ -4,7 +4,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from steering_detection import randCM, symplectic_values
+from steering_detection import randCM, sTr
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -149,8 +149,8 @@ class TestRandCM:
         """symplectic_values should return a positive value for a valid CM block."""
         cm = randCM(entg=1, n_modes=1)
         assert cm is not None
-        sTr = symplectic_values(cm[0:2, 0:2])
-        assert sTr > 0, f"Symplectic trace is non-positive: {sTr}"
+        test_sTr = sTr(cm[0:2, 0:2], n_modes = n_modes)
+        assert sTr > 0, f"Symplectic trace is non-positive: {test_sTr}"
 
     # --- Multiple samples consistency ---
 
