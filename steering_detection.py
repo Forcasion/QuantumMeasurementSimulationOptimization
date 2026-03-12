@@ -90,7 +90,7 @@ def sTr(Z, n_modes=1):
     return val, grad_Z
 
 
-def measurement(n_modes=1, num_ops=None):
+def measurement_random(n_modes=1, num_ops=None):
     """Return a list of random rank-1 measurements for 2*n_modes system."""
     size = 4 * n_modes
     if num_ops is None:
@@ -105,8 +105,12 @@ def measurement(n_modes=1, num_ops=None):
     return M_list
 
 
-def measurement_basis(n_modes=1):
-    """Generate a complete, well-conditioned basis of measurement operators."""
+def measurement_homogeneous(n_modes=1, num_ops=None):
+    """Generate a well-conditioned set of measurement operators.
+    Uses a structured basis (diagonal + off-diagonal) for best conditioning.
+    If num_ops < full basis size, returns first num_ops operators.
+    If num_ops > full basis size, pads with random operators.
+    """
     size = 4 * n_modes
     M_list = []
 
@@ -124,7 +128,17 @@ def measurement_basis(n_modes=1):
             u[j] = 1.0 / np.sqrt(2)
             M_list.append(np.outer(u, u))
 
-    return M_list
+    if num_ops is None:
+        return M_list
+    elif num_ops <= len(M_list):
+        return M_list[:num_ops]
+    else:
+        # pad with random operators
+        for _ in range(num_ops - len(M_list)):
+            u = np.random.randn(size)
+            u /= (np.linalg.norm(u) + 1e-16)
+            M_list.append(np.outer(u, u))
+        return M_list
 
 def qmult_unit(n):
     """Generates a Haar-random unitary matrix of size n"""
@@ -305,6 +319,39 @@ def check_constraints(w_opt, M_list, min_val, num_ops=10, n_modes=1, verbose=Fal
 
     return results
 
+
+def find_good_seeds(M_list, m_list, num_ops, n_modes, n_candidates=10000, n_best=4):
+    size = 2 * n_modes
+    candidates = []
+
+    for _ in range(n_candidates):
+        w = np.random.randn(num_ops) * 0.5
+        f_k = np.dot(w, m_list)
+
+        W = np.sum([w[idx] * M_list[idx] for idx in range(num_ops)], axis=0)
+        Z1 = W[0:size, 0:size]
+        Z2 = W[size:2 * size, size:2 * size]
+
+        min_eig = np.min(np.linalg.eigvalsh(W))
+        sTr1, _ = sTr(Z1, n_modes)
+        sTr2, _ = sTr(Z2, n_modes)
+        sTr_sum = sTr1 + sTr2
+
+        # score: want high sTr, close to steering boundary, close to PSD
+        steering_penalty = abs(f_k - 0.999)  # close to boundary from either side
+        psd_penalty = abs(min(min_eig, 0)) * 10  # penalize negative eigenvalues
+        str_penalty = abs(min(sTr_sum - 0.5, 0)) * 10
+
+        score = steering_penalty + psd_penalty + str_penalty
+
+        candidates.append((score, w))
+
+    candidates.sort(key=lambda x: x[0])
+    seeds = [w for _, w in candidates[:n_best]]
+    w0 = np.ones(num_ops) * (1.0 / num_ops)
+    seeds.append(w0)
+    return seeds
+
 def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
     """
     Detect steering using a robust direct optimizer.
@@ -340,7 +387,7 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
                 for k in range(num_ops):
                     dk1 = np.trace(g1 @ M_list[k][0:size, 0:size])
                     dk2 = np.trace(g2 @ M_list[k][size:2*size, size:2*size])
-                    grad[k] = -float(dk1 + dk2)  # negative: minimize -sTr
+                    grad[k] = -float(dk1 + dk2)
             elif grad.size > 0:
                 grad[:] = 0
         except:
@@ -355,8 +402,7 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
             W = np.sum([w[idx] * M_list[idx] for idx in range(num_ops)], axis=0)
             min_eig = np.min(np.linalg.eigvalsh(W))
             print(f"\r    Eval: {stats['eval']:7d} | sTr: {val:10.6f} | f: {f:10.6f} | min_eig: {min_eig:+.6f}", end="", flush=True)
-            # print(f"\n    Eval: {stats['eval']:7d} | sTr: {val:10.6f} | f_k: {f_k:10.6f}", end="", flush=True)
-        return -float(val)  # minimize -sTr = maximize sTr
+        return -float(val)
 
     def constraint_W_psd(w, grad):
         w = np.nan_to_num(w, nan=0.0)
@@ -395,43 +441,41 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
             grad[:] = m_list
         return float(val)
 
-    opt = nlopt.opt(nlopt.LD_MMA, num_ops)
+    # opt = nlopt.opt(nlopt.LD_MMA, num_ops)
+    opt = nlopt.opt(nlopt.LD_CCSAQ, num_ops)
+    # opt = nlopt.opt(nlopt.LD_SLSQP, num_ops)
     opt.set_min_objective(objective)
     opt.add_inequality_constraint(constraint_W_psd, 1e-10)
     opt.add_inequality_constraint(constraint_symplectic_trace, 1e-10)
     opt.add_inequality_constraint(constraint_steering, 1e-6)
     opt.set_lower_bounds(-100 * np.ones(num_ops))
     opt.set_upper_bounds(100 * np.ones(num_ops))
-    opt.set_xtol_rel(1e-8)
-    opt.set_ftol_rel(1e-8)  # add function tolerance too
+    opt.set_xtol_rel(1e-10)
+    opt.set_ftol_rel(1e-10)  # add function tolerance too
     opt.set_maxeval(20000)
 
     best_w = None
     best_obj = np.inf
 
-    w0 = np.ones(num_ops) * (1.0 / num_ops)
-    seeds = [
-        w0,
-        w0 * 2,
-        np.random.randn(num_ops) * 0.1,
-        np.random.randn(num_ops) * 10,
-    ]
+    seeds = find_good_seeds(M_list, m_list, num_ops, n_modes)
+    if not seeds:
+        print("\n" + "="*50)
+        print("\nFailed to find good seeds")
+        print("\n" + "="*50)
+        return best_obj, best_w
 
-    for w0 in seeds:
+    for seed_idx, seed in enumerate(seeds):
         try:
-            w_res = opt.optimize(w0)
+            w_res = opt.optimize(seed)
             f_k = np.dot(w_res, m_list)
-            # print(f"\n  Seed result: f_k={f_k:.6f}")
             if f_k < best_obj:
                 res = check_constraints(w_res, M_list, f_k, num_ops, n_modes, verbose=False)
                 if res['W_is_PSD'] and res['sTr_satisfied']:
                     best_obj = f_k
                     best_w = w_res
-        # except nlopt.RoundoffLimited:
-        #     w_res = opt.last_optimum_value()  # extract best point found so far
-        #     print(w_res)
+
         except Exception as e:
-            print(f"\n  Seed failed: {e}")
+            print(f"\n  Seed {seed_idx} failed: {e}")
             continue
 
     if stats['eval'] >= 500: print()
@@ -440,76 +484,78 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Quantum Steering Detection")
     parser.add_argument("-nm", "--n_modes", type=int, default=1, help="Number of modes per block (default: 1)")
-    parser.add_argument("-e", "--entanglement", type=int, default=5, help="Target entanglement level (default: 1)")
-    # parser.add_argument("-no", "--num_ops", type=int, default=2*n_modes*(4*n_modes+1), help="Number of measurement operators (default: 2n(2n+1); n=modes)")
-    parser.add_argument("-no", "--num_ops", type=int, default=10, help="Number of measurement operators (default: 2n(2n+1); n=modes)")
+    parser.add_argument("-e", "--entanglement", type=int, default=1, help="Target entanglement level (default: 1)")
+    parser.add_argument("-no", "--num_ops", type=int, default=7, help="Number of measurement operators (default: 2n(2n+1); n=modes)")
+    parser.add_argument("-ma", "--max_attempts", type=int, default=20, help="Max optimization attempts per state (default: 50)")
+    parser.add_argument("-ms", "--max_states", type=int, default=10, help="Max number of states to try (default: 10)")
 
     args = parser.parse_args()
-
     n_modes = args.n_modes
     entanglement_target = args.entanglement
     num_ops = args.num_ops
+    max_attempts = args.max_attempts
+    max_states = args.max_states
+
     print(f"Searching for steering witness for {n_modes}-mode state with entanglement level {entanglement_target}...")
 
-    # Generate target state once
-    while True:
-        state_g = randCM(entanglement_target, n_modes)
-        if state_g is not None:
+    found = False
+    for state_idx in range(max_states):
+
+        # Generate new state
+        state_g = None
+        while state_g is None:
+            state_g = randCM(entanglement_target, n_modes)
+        print(f"\nState {state_idx+1}/{max_states} generated.")
+
+        # Generate measurements for this state
+        M_list = measurement_random(n_modes, num_ops)
+        m_list = [np.real(np.trace(M @ state_g)) for M in M_list]
+        num_ops = len(M_list)
+
+        for attempt in range(max_attempts):
+            print(f"  Attempt {attempt+1}/{max_attempts} ({num_ops} operators)...")
+            min_val, w_opt = steering_detection(M_list, m_list, num_ops, n_modes)
+
+            if w_opt is not None:
+                results = check_constraints(w_opt, M_list, min_val, num_ops, n_modes, verbose=True)
+                if results['all_constraints_ok']:
+                    print(f"\nSUCCESS! Steering detected for state {state_idx+1}, attempt {attempt+1}!")
+                    print(f"Final value: {min_val:.6f}")
+
+                    W_opt = np.sum([w_opt[k] * M_list[k] for k in range(num_ops)], axis=0)
+                    size = 2 * n_modes
+
+                    f_values = np.cumsum(w_opt * np.array(m_list))
+                    filename_f = f"output/f_values_nm{n_modes}_ent{entanglement_target}_ops{num_ops}.csv"
+                    header = f"k,c_j,m_j,c_j*m_j,f_{num_ops} (cumulative)"
+                    rows = np.column_stack([
+                        np.arange(1, num_ops + 1),
+                        w_opt,
+                        np.array(m_list),
+                        w_opt * np.array(m_list),
+                        f_values
+                    ])
+                    np.savetxt(filename_f, rows, delimiter=",", header=header, comments="")
+                    print(f"f(c) values saved to: {filename_f}")
+
+                    filename_z = f"output/z_matrix_nm{n_modes}_ent{entanglement_target}_ops{num_ops}.csv"
+                    np.savetxt(filename_z, W_opt, delimiter=",",
+                               header=f"Z ({2 * size}x{2 * size})", comments="")
+                    print(f"Z matrix saved to: {filename_z}")
+
+                    eigvals_z = np.linalg.eigvalsh(W_opt)
+                    print(f"Z min eigenvalue: {np.min(eigvals_z):.6e}")
+                    print(f"Z is PD: {np.all(eigvals_z > 0)}")
+
+                    found = True
+                    break
+
+            print(f"    -> No witness found yet (f={min_val:.6f})")
+
+        if found:
             break
-        print("  ...generating new state")
+        else:
+            print(f"\n  State {state_idx+1} exhausted after {max_attempts} attempts, trying new state...")
 
-    M_list = measurement(n_modes, num_ops)  # generate basis once outside the attempt loop
-    m_list = [np.real(np.trace(M @ state_g)) for M in M_list]
-    num_ops = len(M_list)
-
-    # M_matrix = np.array(M_list).reshape(num_ops, -1)
-    # print(f"Condition number of M: {np.linalg.cond(M_matrix):.2e}")
-    # input()
-
-    # check_str_feasibility(M_list, state_g, num_ops, n_modes, upper_bound=100)
-    max_attempts = 10
-    for attempt in range(max_attempts):
-        # Run optimization
-        print(f"Attempt {attempt+1} ({num_ops} operators): Running optimization with new random measurements...")
-        min_val, w_opt = steering_detection(M_list, m_list, num_ops, n_modes)
-
-        if w_opt is not None:
-            # Check constraints carefully
-            results = check_constraints(w_opt, M_list, min_val, num_ops, n_modes, True)
-            
-            # Check if steering detected
-            if results['all_constraints_ok']:
-                print(f"\nSUCCESS! Steering detected on attempt {attempt+1}!")
-                print(f"Final value: {min_val:.6f}")
-                
-                # Calculate and print diagonalized matrices for verification
-                W_opt = np.sum([w_opt[k] * M_list[k] for k in range(num_ops)], axis=0)
-                size = 2 * n_modes
-
-                # Export f function to CSV
-                f_values = np.cumsum(w_opt * np.array(m_list)) # shape (num_ops,)
-                filename_f = f"output/f_values_nm{n_modes}_ent{entanglement_target}_ops{num_ops}.csv"
-                header = f"k,c_j,m_j,c_j*m_j,f_{num_ops} (cumulative)"
-                rows = np.column_stack([
-                    np.arange(1, num_ops + 1),
-                    w_opt,
-                    np.array(m_list),
-                    w_opt * np.array(m_list),
-                    f_values  # cumsum
-                ])
-                np.savetxt(filename_f, rows, delimiter=",", header=header, comments="")
-                print(f"f(c) values saved to: {filename_f}")
-
-                # Export Z matrices
-                filename_z = f"output/z_matrix_nm{n_modes}_ent{entanglement_target}_ops{num_ops}.csv"
-                np.savetxt(filename_z, W_opt, delimiter=",",
-                           header=f"Z ({2 * size}x{2 * size})", comments="")
-                print(f"Z matrix saved to: {filename_z}")
-
-                eigvals_z = np.linalg.eigvalsh(W_opt)
-                print(f"Z min eigenvalue: {np.min(eigvals_z):.6e}")
-                print(f"Z is PD: {np.all(eigvals_z > 0)}")
-
-                break
-        
-        print(f"  -> Current Result: {min_val:.6f} (No valid witness found yet)")
+    if not found:
+        print(f"\nFAILED: No steering witness found after {max_states} states x {max_attempts} attempts.")
