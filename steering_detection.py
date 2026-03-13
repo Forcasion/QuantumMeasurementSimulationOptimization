@@ -3,6 +3,8 @@ import numpy as np
 import nlopt
 import math
 import random
+
+from IPython.lib.deepreload import found_now
 from scipy.linalg import block_diag, expm
 from numpy import *
 import argparse
@@ -441,8 +443,8 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
             grad[:] = m_list
         return float(val)
 
-    # opt = nlopt.opt(nlopt.LD_MMA, num_ops)
-    opt = nlopt.opt(nlopt.LD_CCSAQ, num_ops)
+    opt = nlopt.opt(nlopt.LD_MMA, num_ops)
+    # opt = nlopt.opt(nlopt.LD_CCSAQ, num_ops)
     # opt = nlopt.opt(nlopt.LD_SLSQP, num_ops)
     opt.set_min_objective(objective)
     opt.add_inequality_constraint(constraint_W_psd, 1e-10)
@@ -485,9 +487,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Quantum Steering Detection")
     parser.add_argument("-nm", "--n_modes", type=int, default=1, help="Number of modes per block (default: 1)")
     parser.add_argument("-e", "--entanglement", type=int, default=1, help="Target entanglement level (default: 1)")
-    parser.add_argument("-no", "--num_ops", type=int, default=7, help="Number of measurement operators (default: 2n(2n+1); n=modes)")
-    parser.add_argument("-ma", "--max_attempts", type=int, default=20, help="Max optimization attempts per state (default: 50)")
+    parser.add_argument("-no", "--num_ops", type=int, default=10, help="Number of measurement operators")
+    parser.add_argument("-ma", "--max_attempts", type=int, default=20, help="Max optimization attempts per state (default: 20)")
     parser.add_argument("-ms", "--max_states", type=int, default=10, help="Max number of states to try (default: 10)")
+    parser.add_argument("-fa", "--finish_all", action="store_true", default=False, help="If set, continue through all states even after finding a solution")
 
     args = parser.parse_args()
     n_modes = args.n_modes
@@ -495,10 +498,14 @@ if __name__ == "__main__":
     num_ops = args.num_ops
     max_attempts = args.max_attempts
     max_states = args.max_states
+    finish_all = args.finish_all
 
     print(f"Searching for steering witness for {n_modes}-mode state with entanglement level {entanglement_target}...")
 
     found = False
+    successes = 0
+    failures = 0
+
     for state_idx in range(max_states):
 
         # Generate new state
@@ -512,6 +519,7 @@ if __name__ == "__main__":
         m_list = [np.real(np.trace(M @ state_g)) for M in M_list]
         num_ops = len(M_list)
 
+        state_found = False
         for attempt in range(max_attempts):
             print(f"  Attempt {attempt+1}/{max_attempts} ({num_ops} operators)...")
             min_val, w_opt = steering_detection(M_list, m_list, num_ops, n_modes)
@@ -535,27 +543,40 @@ if __name__ == "__main__":
                         w_opt * np.array(m_list),
                         f_values
                     ])
-                    np.savetxt(filename_f, rows, delimiter=",", header=header, comments="")
-                    print(f"f(c) values saved to: {filename_f}")
 
-                    filename_z = f"output/z_matrix_nm{n_modes}_ent{entanglement_target}_ops{num_ops}.csv"
-                    np.savetxt(filename_z, W_opt, delimiter=",",
-                               header=f"Z ({2 * size}x{2 * size})", comments="")
-                    print(f"Z matrix saved to: {filename_z}")
+                    if not finish_all:
+                        np.savetxt(filename_f, rows, delimiter=",", header=header, comments="")
 
-                    eigvals_z = np.linalg.eigvalsh(W_opt)
-                    print(f"Z min eigenvalue: {np.min(eigvals_z):.6e}")
-                    print(f"Z is PD: {np.all(eigvals_z > 0)}")
+                        filename_z = f"output/z_matrix_nm{n_modes}_ent{entanglement_target}_ops{num_ops}.csv"
+                        np.savetxt(filename_z, W_opt, delimiter=",",
+                                   header=f"Z ({2 * size}x{2 * size})", comments="")
+
+                        eigvals_z = np.linalg.eigvalsh(W_opt)
+                        print(f"Z min eigenvalue: {np.min(eigvals_z):.6e}")
+                        print(f"Z is PD: {np.all(eigvals_z > 0)}")
 
                     found = True
+                    state_found = True
+                    successes += 1
                     break
 
             print(f"    -> No witness found yet (f={min_val:.6f})")
 
-        if found:
+        if not state_found:
+            failures += 1
+            print(f"\n  State {state_idx+1} exhausted after {max_attempts} attempts.")
+
+        if found and not finish_all:
             break
-        else:
-            print(f"\n  State {state_idx+1} exhausted after {max_attempts} attempts, trying new state...")
+
+    # Summary
+    if finish_all:
+        summary_filename = f"output/summary_nm{n_modes}_ent{entanglement_target}_ops{num_ops}.csv"
+        with open(summary_filename, "w") as f:
+            f.write("n_modes,entanglement,num_ops,max_states,max_attempts,successes,failures,success_rate\n")
+            f.write(f"{n_modes},{entanglement_target},{num_ops},{max_states},{max_attempts},{successes},{failures},{successes/max_states:.4f}\n")
+        print(f"\nSummary: {successes}/{max_states} states certified ({successes/max_states:.1%})")
+        print(f"Summary saved to: {summary_filename}")
 
     if not found:
         print(f"\nFAILED: No steering witness found after {max_states} states x {max_attempts} attempts.")
