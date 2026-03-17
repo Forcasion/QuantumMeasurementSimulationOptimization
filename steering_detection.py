@@ -3,6 +3,7 @@ import numpy as np
 import nlopt
 import math
 import random
+import matplotlib.pyplot as plt
 
 from IPython.lib.deepreload import found_now
 from scipy.linalg import block_diag, expm
@@ -73,7 +74,7 @@ def sTr(Z, n_modes=1):
     # Check if Z is PD to send back a signal of infesability to the objective
     eigvals = np.linalg.eigvalsh(Z_r)
     if np.any(eigvals <= 0):
-        return 0.0, None
+        return -100.0, None
 
     if n_modes == 1:
         det = np.linalg.det(Z_r)
@@ -312,6 +313,9 @@ def check_constraints(w_opt, M_list, min_val, num_ops=10, n_modes=1, verbose=Fal
         print(f"{'PSD (Min eigval >= 0)':30} | {min_eigval:12.8f} | {'[OK]' if W_psd else '[FAIL]'}")
         if sTr_sum is not None:
             print(f"{'sTr (Sum traces >= 0.5)':30} | {sTr_sum:12.8f} | {'[OK]' if sTr_satisfied else '[FAIL]'}")
+            print(f"{'sTr(Z1)':30} | {sTr_Z1:12.8f} | ")
+            print(f"{'sTr(Z2)':30} | {sTr_Z2:12.8f} | ")
+
         else:
             print(f"{'sTr Condition':30} | {'ERROR':12} | [FAIL]")
         print(f"{'Steering (w·m < 1)':30} | {min_val:12.8f} | {'[OK]' if steering_ok else '[FAIL]'}")
@@ -321,7 +325,125 @@ def check_constraints(w_opt, M_list, min_val, num_ops=10, n_modes=1, verbose=Fal
 
     return results
 
+def random_orthonormal_directions(dim):
+    d1 = np.random.randn(dim)
+    d1 /= np.linalg.norm(d1) + 1e-12
 
+    d2 = np.random.randn(dim)
+    d2 -= np.dot(d2, d1) * d1  # Gram-Schmidt
+    d2 /= np.linalg.norm(d2) + 1e-12
+
+    return d1, d2
+
+def evaluate_2d_slice(w0, d1, d2, M_list, m_list, num_ops, n_modes,
+                      grid_size=80, span=1.0):
+    size = 2 * n_modes
+    alphas = np.linspace(-span, span, grid_size)
+    betas  = np.linspace(-span, span, grid_size)
+
+    F = np.zeros((grid_size, grid_size))
+    PSD = np.zeros_like(F)
+    STR = np.zeros_like(F)
+    STEER = np.zeros_like(F)
+
+    for i, a in enumerate(alphas):
+        for j, b in enumerate(betas):
+            w = w0 + a*d1 + b*d2
+
+            # Objective
+            f = np.dot(w, m_list)
+            F[i, j] = f
+
+            # Build W
+            W = np.sum([w[k] * M_list[k] for k in range(num_ops)], axis=0)
+            W = (W + W.T) / 2.0
+
+            # PSD constraint
+            min_eig = np.min(np.linalg.eigvalsh(W))
+            PSD[i, j] = min_eig
+
+            # Symplectic trace
+            Z1 = W[0:size, 0:size]
+            Z2 = W[size:2*size, size:2*size]
+            sTr1, _ = sTr(Z1, n_modes)
+            sTr2, _ = sTr(Z2, n_modes)
+            STR[i, j] = sTr1 + sTr2 - 0.5
+
+            # Steering
+            STEER[i, j] = 0.999 - f
+
+    return alphas, betas, F, PSD, STR, STEER
+
+
+def plot_2d_slice(alphas, betas, F, PSD, STR, STEER):
+    A, B = np.meshgrid(alphas, betas, indexing='ij')
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+
+    # ============================================================
+    # LEFT: OBJECTIVE LANDSCAPE
+    # ============================================================
+    ax = axes[0]
+
+    obj = ax.contourf(A, B, F, levels=50)
+    ax.scatter(0, 0, s=80, marker='x')
+    fig.colorbar(obj, ax=ax, label="Objective f(w)")
+
+    ax.set_title("Objective Landscape")
+    ax.set_xlabel("alpha")
+    ax.set_ylabel("beta")
+    ax.grid(True, alpha=0.3)
+
+    # ============================================================
+    # RIGHT: CONSTRAINT GEOMETRY
+    # ============================================================
+    ax = axes[1]
+    ax.scatter(0, 0, s=80, marker='x')
+
+    # Feasible regions (binary masks)
+    psd_region = PSD >= 0
+    str_region = STR >= 0
+    steer_region = STEER >= 0
+
+    # Plot shaded regions separately (different layers)
+    ax.contourf(A, B, psd_region, levels=[0.5, 1], alpha=0.2)
+    ax.contourf(A, B, str_region, levels=[0.5, 1], alpha=0.2)
+    ax.contourf(A, B, steer_region, levels=[0.5, 1], alpha=0.2)
+
+    # Boundaries
+    c_psd = ax.contour(A, B, PSD, levels=[0], linewidths=2)
+    c_str = ax.contour(A, B, STR, levels=[0], linestyles='--', linewidths=2)
+    c_steer = ax.contour(A, B, STEER, levels=[0], linestyles=':', linewidths=2)
+
+    # Labels
+    ax.clabel(c_psd, fmt={0: 'PSD'}, inline=True)
+    ax.clabel(c_str, fmt={0: 'sTr'}, inline=True)
+    ax.clabel(c_steer, fmt={0: 'Steering'}, inline=True)
+
+    ax.set_title("Constraint Feasible Regions")
+    ax.set_xlabel("alpha")
+    ax.set_ylabel("beta")
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def visualiser_wrapper(opt, w_res):
+    result_code = opt.last_optimize_result()
+    if w_res is not None:
+        print("\nVisualizing local geometry")
+
+        d1, d2 = random_orthonormal_directions(num_ops)
+
+        alphas, betas, F, PSD, STR, STEER = evaluate_2d_slice(
+            w_res, d1, d2,
+            M_list, m_list, num_ops, n_modes,
+            grid_size=160,
+            span=1
+        )
+
+        plot_2d_slice(alphas, betas, F, PSD, STR, STEER)
 def find_good_seeds(M_list, m_list, num_ops, n_modes, n_candidates=10000, n_best=4):
     size = 2 * n_modes
     candidates = []
@@ -458,6 +580,7 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
         print("\n" + "="*50)
         return best_obj, best_w
 
+    w_res = None
     for seed_idx, seed in enumerate(seeds):
         try:
             w_res = opt.optimize(seed)
@@ -472,7 +595,7 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
             print(f"\n  Seed {seed_idx} failed: {e}")
             continue
 
-    if stats['eval'] >= 500: print()
+    # visualiser_wrapper(opt, w_res)
     return best_obj, best_w
 
 if __name__ == "__main__":
