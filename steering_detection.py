@@ -378,33 +378,24 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
     def objective(w, grad):
         w = np.nan_to_num(w, nan=0.0)
         try:
-            W, Z1, Z2, sTr1, sTr2, g1, g2 = compute_sTr_sum(w)
-            val = sTr1 + sTr2
-
-            if val == 0.0:  # Z not PD, penalize
-                if grad.size > 0: grad[:] = 0
-                return 100.0
-
-            if grad.size > 0 and g1 is not None and g2 is not None:
-                for k in range(num_ops):
-                    dk1 = np.trace(g1 @ M_list[k][0:size, 0:size])
-                    dk2 = np.trace(g2 @ M_list[k][size:2*size, size:2*size])
-                    grad[k] = -float(dk1 + dk2)
-            elif grad.size > 0:
-                grad[:] = 0
+            obj = np.dot(w, m_list)
+            if grad.size > 0:
+                grad[:] = m_list
         except:
-            val = 0.0
+            obj = 0.0
             if grad.size > 0:
                 grad[:] = 0
 
         stats['eval'] += 1
         output_frequency = 1
         if stats['eval'] % output_frequency == 0:
+            W, Z1, Z2, sTr1, sTr2, g1, g2 = compute_sTr_sum(w)
+            val = sTr1 + sTr2
             f = np.dot(w, m_list)
             W = np.sum([w[idx] * M_list[idx] for idx in range(num_ops)], axis=0)
             min_eig = np.min(np.linalg.eigvalsh(W))
             print(f"\r    Eval: {stats['eval']:7d} | sTr: {val:10.6f} | f: {f:10.6f} | min_eig: {min_eig:+.6f}", end="", flush=True)
-        return -float(val)
+        return float(obj)
 
     def constraint_W_psd(w, grad):
         w = np.nan_to_num(w, nan=0.0)
@@ -443,13 +434,14 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
             grad[:] = m_list
         return float(val)
 
-    opt = nlopt.opt(nlopt.LD_MMA, num_ops)
+
+    # opt = nlopt.opt(nlopt.LD_MMA, num_ops)
     # opt = nlopt.opt(nlopt.LD_CCSAQ, num_ops)
-    # opt = nlopt.opt(nlopt.LD_SLSQP, num_ops)
+    opt = nlopt.opt(nlopt.LD_SLSQP, num_ops)
     opt.set_min_objective(objective)
     opt.add_inequality_constraint(constraint_W_psd, 1e-10)
     opt.add_inequality_constraint(constraint_symplectic_trace, 1e-10)
-    opt.add_inequality_constraint(constraint_steering, 1e-6)
+    opt.add_inequality_constraint(constraint_steering, 1e-10)
     opt.set_lower_bounds(-100 * np.ones(num_ops))
     opt.set_upper_bounds(100 * np.ones(num_ops))
     opt.set_xtol_rel(1e-10)
@@ -571,7 +563,8 @@ if __name__ == "__main__":
 
     # Summary
     if finish_all:
-        summary_filename = f"output/summary_nm{n_modes}_ent{entanglement_target}_ops{num_ops}.csv"
+        optimization_algorithm_name = "LD_SLSQP"
+        summary_filename = f"output/summary_{optimization_algorithm_name}_nm{n_modes}_ent{entanglement_target}_ops{num_ops}.csv"
         with open(summary_filename, "w") as f:
             f.write("n_modes,entanglement,num_ops,max_states,max_attempts,successes,failures,success_rate\n")
             f.write(f"{n_modes},{entanglement_target},{num_ops},{max_states},{max_attempts},{successes},{failures},{successes/max_states:.4f}\n")
