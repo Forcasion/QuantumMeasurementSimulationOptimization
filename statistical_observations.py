@@ -7,5 +7,5 @@ for ent in range(1, 6):
         print(f"Entanglement: {ent} | Num ops: {num_ops}")
         print(f"{'='*50}")
         subprocess.run(
-            [sys.executable, "steering_detection.py", "-e", str(ent), "-no", str(num_ops), "-ms", "20", "-fa", "-ma", "10"],
+            [sys.executable, "steering_detection.py", "-e", str(ent), "-no", str(num_ops), "-ms", "20", "-fa", "-ma", "1"],
         )
