@@ -4,6 +4,9 @@ import nlopt
 import math
 import random
 import matplotlib.pyplot as plt
+from scipy.optimize import differential_evolution
+
+
 
 from IPython.lib.deepreload import found_now
 from scipy.linalg import block_diag, expm
@@ -88,7 +91,7 @@ def sTr(Z, n_modes=1):
         S = get_S(Z_r)
         val = np.sum(np.diag(S @ Z_r @ S.T)[::2])
         grad_Z = S.T[::2, :].T @ S[::2, :]  # d(sTr)/dZ = S^T D S where D selects even rows
-        grad_Z = None  # placeholder — multi-mode gradient needs more careful derivation
+        grad_Z = None  # Ignore this. n_modes is always 1 for now.
 
     return val, grad_Z
 
@@ -444,6 +447,8 @@ def visualiser_wrapper(opt, w_res):
         )
 
         plot_2d_slice(alphas, betas, F, PSD, STR, STEER)
+
+
 def find_good_seeds(M_list, m_list, num_ops, n_modes, n_candidates=10000, n_best=4):
     size = 2 * n_modes
     candidates = []
@@ -557,21 +562,57 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
         return float(val)
 
 
+    # # Global optimization first
+    # opt_global = nlopt.opt(nlopt.GN_ISRES, num_ops)
+    # opt_global.set_min_objective(objective)
+    #
+    # opt_global.add_inequality_constraint(constraint_W_psd, 1e-6)
+    # opt_global.add_inequality_constraint(constraint_symplectic_trace, 1e-6)
+    # opt_global.add_inequality_constraint(constraint_steering, 1e-6)
+    #
+    # opt_global.set_lower_bounds(-100 * np.ones(num_ops))
+    # opt_global.set_upper_bounds(100 * np.ones(num_ops))
+    #
+    #
+    # opt_global.set_maxeval(3000)
+    # opt_global.set_xtol_rel(1e-4)
+    # opt_global.set_ftol_rel(1e-4)
+    #
+    # w0 = np.ones(num_ops) / num_ops
+    #
+    # try:
+    #     w_global = opt_global.optimize(w0)
+    #     print(f"\n  [Global] f = {np.dot(w_global, m_list):.6f}")
+    # except Exception as e:
+    #     print(f"\n  [Global] failed: {e}, falling back to w0")
+    #     w_global = w0
+
+
+    # Local optimization
     # opt = nlopt.opt(nlopt.LD_MMA, num_ops)
     # opt = nlopt.opt(nlopt.LD_CCSAQ, num_ops)
     opt = nlopt.opt(nlopt.LD_SLSQP, num_ops)
     opt.set_min_objective(objective)
+
     opt.add_inequality_constraint(constraint_W_psd, 1e-10)
     opt.add_inequality_constraint(constraint_symplectic_trace, 1e-10)
     opt.add_inequality_constraint(constraint_steering, 1e-10)
-    opt.set_lower_bounds(-100 * np.ones(num_ops))
-    opt.set_upper_bounds(100 * np.ones(num_ops))
-    opt.set_xtol_rel(1e-10)
-    opt.set_ftol_rel(1e-10)  # add function tolerance too
+
+    opt.set_lower_bounds(-50 * np.ones(num_ops))
+    opt.set_upper_bounds(50 * np.ones(num_ops))
+
+    opt.set_xtol_rel(1e-20)
+    opt.set_ftol_rel(1e-20)
     opt.set_maxeval(20000)
 
     best_w = None
     best_obj = np.inf
+
+    # #Seeds for global optimization
+    # seeds = [w_global]
+    # for _ in range(4):
+    #     noise = np.random.randn(num_ops) * 0.05
+    #     seeds.append(w_global + noise)
 
     seeds = find_good_seeds(M_list, m_list, num_ops, n_modes)
     if not seeds:
@@ -580,7 +621,8 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
         print("\n" + "="*50)
         return best_obj, best_w
 
-    w_res = None
+
+
     for seed_idx, seed in enumerate(seeds):
         try:
             w_res = opt.optimize(seed)
@@ -603,92 +645,45 @@ if __name__ == "__main__":
     parser.add_argument("-nm", "--n_modes", type=int, default=1, help="Number of modes per block (default: 1)")
     parser.add_argument("-e", "--entanglement", type=int, default=1, help="Target entanglement level (default: 1)")
     parser.add_argument("-no", "--num_ops", type=int, default=10, help="Number of measurement operators")
-    parser.add_argument("-ma", "--max_attempts", type=int, default=20, help="Max optimization attempts per state (default: 20)")
-    parser.add_argument("-ms", "--max_states", type=int, default=10, help="Max number of states to try (default: 10)")
-    parser.add_argument("-fa", "--finish_all", action="store_true", default=False, help="If set, continue through all states even after finding a solution")
+    parser.add_argument("-ma", "--max_attempts", type=int, default=1, help="Max optimization attempts per state (default: 1)")
+    parser.add_argument("-ts", "--total_states", type=int, default=10, help="Total number of states to check(default: 100)")
+
 
     args = parser.parse_args()
     n_modes = args.n_modes
     entanglement_target = args.entanglement
     num_ops = args.num_ops
     max_attempts = args.max_attempts
-    max_states = args.max_states
-    finish_all = args.finish_all
+    total_states = args.total_states
 
-    print(f"Searching for steering witness for {n_modes}-mode state with entanglement level {entanglement_target}...")
+    filename = f"output/multiple_states_ent{entanglement_target}.csv"
+    with open(filename, "w") as f:
+        f.write("state index, f\n")
+        # Calculate ideal
+        ideal_f = 2**(-entanglement_target/5)
+        f.write(f"ideal, {ideal_f}\n")
 
-    for state_idx in range(max_states):
 
-        # Generate new state
-        state_g = None
-        while state_g is None:
-            state_g = randCM(entanglement_target, n_modes)
-        print(f"\nState {state_idx+1}/{max_states} generated.")
+        for state in range(total_states):
+            # Generate new state
+            state_g = None
+            while state_g is None:
+                state_g = randCM(entanglement_target, n_modes)
+            print(f"\nState generated.")
 
-        # Generate measurements for this state
-        M_list = measurement_random(n_modes, num_ops)
-        m_list = [np.real(np.trace(M @ state_g)) for M in M_list]
-        num_ops = len(M_list)
+            # Generate measurements for this state
+            M_list = measurement_random(n_modes, num_ops)
+            m_list = [np.real(np.trace(M @ state_g)) for M in M_list]
+            num_ops = len(M_list)
 
-        state_found = False
-        for attempt in range(max_attempts):
-            print(f"  Attempt {attempt+1}/{max_attempts} ({num_ops} operators)...")
-            min_val, w_opt = steering_detection(M_list, m_list, num_ops, n_modes)
+            for attempt in range(max_attempts):
+                print(f"  Attempt {attempt+1}/{max_attempts} ({num_ops} operators)...")
+                min_val, w_opt = steering_detection(M_list, m_list, num_ops, n_modes)
+                if min_val is not inf:
+                    print(f"\nSteering detected for {num_ops} measurements using entanglement level {entanglement_target}.")
+                else:
+                    print(f"\nOptimization failed for {num_ops} measurements using entanglement level {entanglement_target}.")
+                f.write(f"{state},{min_val}\n")
 
-            if w_opt is not None:
-                results = check_constraints(w_opt, M_list, min_val, num_ops, n_modes, verbose=True)
-                if results['all_constraints_ok']:
-                    print(f"\nSUCCESS! Steering detected for state {state_idx+1}, attempt {attempt+1}!")
-                    print(f"Final value: {min_val:.6f}")
 
-                    W_opt = np.sum([w_opt[k] * M_list[k] for k in range(num_ops)], axis=0)
-                    size = 2 * n_modes
 
-                    f_values = np.cumsum(w_opt * np.array(m_list))
-                    filename_f = f"output/f_values_nm{n_modes}_ent{entanglement_target}_ops{num_ops}.csv"
-                    header = f"k,c_j,m_j,c_j*m_j,f_{num_ops} (cumulative)"
-                    rows = np.column_stack([
-                        np.arange(1, num_ops + 1),
-                        w_opt,
-                        np.array(m_list),
-                        w_opt * np.array(m_list),
-                        f_values
-                    ])
-
-                    if not finish_all:
-                        np.savetxt(filename_f, rows, delimiter=",", header=header, comments="")
-
-                        filename_z = f"output/z_matrix_nm{n_modes}_ent{entanglement_target}_ops{num_ops}.csv"
-                        np.savetxt(filename_z, W_opt, delimiter=",",
-                                   header=f"Z ({2 * size}x{2 * size})", comments="")
-
-                        eigvals_z = np.linalg.eigvalsh(W_opt)
-                        print(f"Z min eigenvalue: {np.min(eigvals_z):.6e}")
-                        print(f"Z is PD: {np.all(eigvals_z > 0)}")
-
-                    found = True
-                    state_found = True
-                    successes += 1
-                    break
-
-            print(f"    -> No witness found yet (f={min_val:.6f})")
-
-        if not state_found:
-            failures += 1
-            print(f"\n  State {state_idx+1} exhausted after {max_attempts} attempts.")
-
-        if found and not finish_all:
-            break
-
-    # Summary
-    if finish_all:
-        optimization_algorithm_name = "LD_SLSQP"
-        summary_filename = f"output/summary_{optimization_algorithm_name}_nm{n_modes}_ent{entanglement_target}_ops{num_ops}.csv"
-        with open(summary_filename, "w") as f:
-            f.write("n_modes,entanglement,num_ops,max_states,max_attempts,successes,failures,success_rate\n")
-            f.write(f"{n_modes},{entanglement_target},{num_ops},{max_states},{max_attempts},{successes},{failures},{successes/max_states:.4f}\n")
-        print(f"\nSummary: {successes}/{max_states} states certified ({successes/max_states:.1%})")
-        print(f"Summary saved to: {summary_filename}")
-
-    if not found:
-        print(f"\nFAILED: No steering witness found after {max_states} states x {max_attempts} attempts.")
