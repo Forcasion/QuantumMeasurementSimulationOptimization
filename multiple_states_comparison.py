@@ -13,6 +13,14 @@ from scipy.linalg import block_diag, expm
 from numpy import *
 import argparse
 
+
+
+# Tolerances
+
+tolerance_psd = 1e-10
+tolerance_sTr = 1e-10
+tolerance_steering = 1e-10
+
 def get_S(Z):
     """
     Find the symplectic transformation S such that S Z S^T = D,
@@ -74,14 +82,16 @@ def sTr(Z, n_modes=1):
     """
     Z_r = (Z + Z.T) / 2.0
 
-    # Check if Z is PD to send back a signal of infesability to the objective
-    eigvals = np.linalg.eigvalsh(Z_r)
-    if np.any(eigvals <= 0):
-        return -100.0, None
-
     if n_modes == 1:
         det = np.linalg.det(Z_r)
-        val = np.sqrt(np.maximum(1e-18, det))
+
+
+        # val = np.sqrt(np.maximum(1e-18, det))
+        if det <= 0:
+            return None, None
+
+        val = np.sqrt(det)
+
         try:
             inv = np.linalg.inv(Z_r)
             grad_Z = 0.5 * val * inv  # d(sqrt(det(Z)))/dZ = 0.5 * sqrt(det(Z)) * Z^{-1}
@@ -146,6 +156,98 @@ def measurement_homogeneous(n_modes=1, num_ops=None):
             M_list.append(np.outer(u, u))
         return M_list
 
+def measurement_fixed(n_modes=1, num_ops=None):
+    """
+    For testing only
+    Deterministic measurement operators.
+    Uses a fixed orthonormal basis of symmetric matrices.
+    """
+    size = 4 * n_modes
+    M_list = []
+
+    # --- 1. Diagonal elements ---
+    for i in range(size):
+        M = np.zeros((size, size))
+        M[i, i] = 1.0
+        M_list.append(M)
+
+    # --- 2. Symmetric off-diagonal elements ---
+    for i in range(size):
+        for j in range(i + 1, size):
+            M = np.zeros((size, size))
+            M[i, j] = 1.0 / np.sqrt(2)
+            M[j, i] = 1.0 / np.sqrt(2)
+            M_list.append(M)
+
+    # Total possible operators
+    full_basis_size = len(M_list)
+
+    if num_ops is None:
+        return M_list
+
+    if num_ops <= full_basis_size:
+        return M_list[:num_ops]
+
+    # --- 3. If more requested, pad deterministically ---
+    # Use fixed pseudo-random but deterministic vectors
+    rng = np.random.default_rng(12345)
+
+    while len(M_list) < num_ops:
+        u = rng.standard_normal(size)
+        u /= np.linalg.norm(u) + 1e-16
+        M_list.append(np.outer(u, u))
+
+    return M_list
+
+def state_diagnostics(state_g, m_list, num_ops):
+    print(f"\nCM:\n{np.round(state_g, 4)}")
+    print(f"CM min eigval: {np.min(np.linalg.eigvalsh(state_g)):.6f}")
+
+    # Check m_list values
+    print(f"\nm_list: min={min(m_list):.6f}, max={max(m_list):.6f}, sum={sum(m_list):.6f}")
+    print(f"m_list values: {[round(m, 4) for m in m_list]}")
+
+    # Check if a trivial feasible point exists at all
+    w_test = np.ones(num_ops) / num_ops
+    W_test = np.sum([w_test[k] * M_list[k] for k in range(num_ops)], axis=0)
+    Z1_test = W_test[0:2, 0:2]
+    Z2_test = W_test[2:4, 2:4]
+    sTr1_test, _ = sTr(Z1_test, n_modes)
+    sTr2_test, _ = sTr(Z2_test, n_modes)
+    print(f"\nAt w=1/num_ops:")
+    print(f"  min_eig(W): {np.min(np.linalg.eigvalsh(W_test)):.6f}")
+    print(f"  sTr1+sTr2: {sTr1_test + sTr2_test if sTr1_test and sTr2_test else 'None'}")
+    print(f"  f = w·m: {np.dot(w_test, m_list):.6f}")
+
+    # Check best seed found by find_good_seeds
+    seeds = find_good_seeds(M_list, m_list, num_ops, n_modes)
+    for i, s in enumerate(seeds):
+        W_s = np.sum([s[k] * M_list[k] for k in range(num_ops)], axis=0)
+        Z1_s = W_s[0:2, 0:2]
+        Z2_s = W_s[2:4, 2:4]
+        sTr1_s, _ = sTr(Z1_s, n_modes)
+        sTr2_s, _ = sTr(Z2_s, n_modes)
+        print(f"\nSeed {i}: f={np.dot(s, m_list):.6f}, "
+              f"min_eig={np.min(np.linalg.eigvalsh(W_s)):.6f}, "
+              f"sTr={sTr1_s + sTr2_s if sTr1_s and sTr2_s else 'None':.6f}")
+
+    # Build the "Gram matrix" of measurements weighted by m_list
+    G = np.array([[np.trace(M_list[i] @ M_list[j]) for j in range(num_ops)]
+                  for i in range(num_ops)])
+    print(f"Condition number of G: {np.linalg.cond(G):.2e}")
+
+    # Also check how well m_list can be represented
+    A = np.array([[np.trace(M_list[i] @ M_list[j]) for j in range(num_ops)]
+                  for i in range(num_ops)])
+    print(f"Rank of measurement matrix: {np.linalg.matrix_rank(A)}")
+
+    # Project CM onto measurement basis
+    coeffs = np.linalg.lstsq(np.array([[np.trace(M @ N) for N in M_list]
+                                       for M in M_list]), m_list, rcond=None)
+    print(f"Reconstruction residual: {coeffs[1]}")
+
+
+
 def qmult_unit(n):
     """Generates a Haar-random unitary matrix of size n"""
     F = np.random.randn(n, n) + 1j * np.random.randn(n, n)
@@ -189,6 +291,7 @@ def rand_rsymp(n,c):
     return U @ np.diag(s) @ V
 
 def randCM(entg=1, n_modes=1):
+    # TODO: change things here to be like randCM _fixed parameters
     """Searches for a random state with a specific entanglement level for 2*n_modes.
     Parameters:
         entg: entanglement level
@@ -200,7 +303,7 @@ def randCM(entg=1, n_modes=1):
     total_modes = 2 * n_modes
     size = 4 * n_modes
     num = 100000
-    rot = 10
+    rot = 1000
     int_factor = 5
 
     # Build interleaving permutation matrix
@@ -239,6 +342,8 @@ def randCM(entg=1, n_modes=1):
 
         if n_modes == 1:
             if EN_rounded == entg / int_factor:
+                if np.linalg.cond(cm) > 1e4:
+                    continue
                 return cm
         else:
             # For n_modes > 1, log negativity across the Alice/Bob bipartition
@@ -247,6 +352,64 @@ def randCM(entg=1, n_modes=1):
 
     return None
 
+def randCM_fixed(entg=1, n_modes=1, seed=0):
+    """
+    Deterministic version of randCM. Returns the same covariance matrix
+    for a given (entg, n_modes, seed) combination.
+    """
+    rng = np.random.default_rng(seed)
+
+    total_modes = 2 * n_modes
+    size = 4 * n_modes
+
+    # Same permutation matrix as randCM
+    P = np.zeros((size, size))
+    for i in range(n_modes):
+        P[4*i,    2*i]             = 1
+        P[4*i+1,  2*n_modes+2*i]  = 1
+        P[4*i+2,  2*i+1]          = 1
+        P[4*i+3,  2*n_modes+2*i+1]= 1
+
+    num = 100000
+    rot = 1000
+    int_factor = 5
+
+    for _ in range(num):
+        d_vals = 1.0 + rng.random(total_modes) * 0.5
+        g_diag = np.diag(np.repeat(d_vals, 2))
+
+        symp_eigs = 1.0 + rng.random(total_modes) * 5
+
+        # symp_orth and rand_rsymp use global np.random, so we patch via seed
+        # by temporarily seeding the global state
+        local_seed = int(rng.integers(0, 2**31))
+        np.random.seed(local_seed)
+        S = rand_rsymp(total_modes, symp_eigs)
+
+        g3 = S.T @ g_diag @ S
+        cm = P.T @ g3 @ P
+
+        det_11 = np.linalg.det(cm[0:2, 0:2])
+        det_22 = np.linalg.det(cm[2:4, 2:4])
+        det_12 = np.linalg.det(cm[0:2, 2:4])
+        det_cm = np.linalg.det(cm)
+
+        f = (0.5 * (det_11 + det_22) - det_12
+             - np.sqrt(np.maximum(0, (0.5 * (det_11 + det_22) - det_12)**2 - det_cm)))
+
+        EN = -0.5 * np.log2(np.maximum(1e-10, f))
+        EN_rounded = np.round(EN * rot) / rot
+
+
+        if n_modes == 1:
+            if EN_rounded == entg / int_factor:
+                if np.linalg.cond(cm) > 1e4:
+                    continue
+                return cm
+        else:
+            return cm
+
+    return None
 
 def separableCM(n_modes=1):
     """Generate a separable (non-entangled) Gaussian covariance matrix.
@@ -274,59 +437,6 @@ def separableCM(n_modes=1):
     cm = block_diag(cm_alice, cm_bob)
 
     return cm
-
-def check_constraints(w_opt, M_list, min_val, num_ops=10, n_modes=1, verbose=False):
-    """
-    Verify all constraints are satisfied.
-    """
-    W = np.sum([w_opt[k] * M_list[k] for k in range(num_ops)], axis=0)
-    size = 2 * n_modes
-
-    # Check 1: W ≥ 0 (PSD)
-    eigvals = np.linalg.eigvalsh(W)
-    min_eigval = np.min(np.real(eigvals))
-    W_psd = min_eigval >= -1e-9
-
-    # Check 2: sTr(Z1) + sTr(Z2) ≥ 0.5
-    Z1 = W[0:size, 0:size]
-    Z2 = W[size:2*size, size:2*size]
-
-    sTr_Z1, _ = sTr(Z1, n_modes=n_modes)
-    sTr_Z2, _ = sTr(Z2, n_modes=n_modes)
-
-    sTr_sum = sTr_Z1 + sTr_Z2
-    sTr_satisfied = sTr_sum >= 0.5 - 1e-7
-
-    steering_ok = min_val < 1.0 - 1e-7
-
-    results = {
-        'min_eigval_W': min_eigval,
-        'W_is_PSD': W_psd,
-        'sTr_sum': sTr_sum,
-        'sTr_satisfied': sTr_satisfied,
-        'steering_satisfied': steering_ok,
-        'objective_value': min_val,
-        'all_constraints_ok': W_psd and sTr_satisfied and steering_ok
-    }
-
-    if verbose:
-        print("\n" + "="*50)
-        print(f"{'Condition':30} | {'Value':12} | {'Result'}")
-        print("-" * 50)
-        print(f"{'PSD (Min eigval >= 0)':30} | {min_eigval:12.8f} | {'[OK]' if W_psd else '[FAIL]'}")
-        if sTr_sum is not None:
-            print(f"{'sTr (Sum traces >= 0.5)':30} | {sTr_sum:12.8f} | {'[OK]' if sTr_satisfied else '[FAIL]'}")
-            print(f"{'sTr(Z1)':30} | {sTr_Z1:12.8f} | ")
-            print(f"{'sTr(Z2)':30} | {sTr_Z2:12.8f} | ")
-
-        else:
-            print(f"{'sTr Condition':30} | {'ERROR':12} | [FAIL]")
-        print(f"{'Steering (w·m < 1)':30} | {min_val:12.8f} | {'[OK]' if steering_ok else '[FAIL]'}")
-        print("-" * 50)
-        print(f"OVERALL RESULT: {'FEASIBLE [OK]' if results['all_constraints_ok'] else 'UNFEASIBLE [FAIL]'}")
-        print("="*50 + "\n")
-
-    return results
 
 def random_orthonormal_directions(dim):
     d1 = np.random.randn(dim)
@@ -370,7 +480,11 @@ def evaluate_2d_slice(w0, d1, d2, M_list, m_list, num_ops, n_modes,
             Z2 = W[size:2*size, size:2*size]
             sTr1, _ = sTr(Z1, n_modes)
             sTr2, _ = sTr(Z2, n_modes)
-            STR[i, j] = sTr1 + sTr2 - 0.5
+
+            if sTr1 is None or sTr2 is None:
+                STR[i, j] = -1.0
+            else:
+                STR[i, j] = sTr1 + sTr2 - 0.5
 
             # Steering
             STEER[i, j] = 0.999 - f
@@ -448,8 +562,15 @@ def visualiser_wrapper(opt, w_res):
 
         plot_2d_slice(alphas, betas, F, PSD, STR, STEER)
 
+def find_fixed_seeds(M_list, m_list, num_ops, n_modes, n_candidates=10000, n_best=4):
+    w0 = np.ones(num_ops) * (1.0 / num_ops)
+    seeds = [
+        w0,
+        w0 * 2]
+    return seeds
 
 def find_good_seeds(M_list, m_list, num_ops, n_modes, n_candidates=10000, n_best=4):
+    # For good results n_candidates = 1000000 or more
     size = 2 * n_modes
     candidates = []
 
@@ -464,14 +585,18 @@ def find_good_seeds(M_list, m_list, num_ops, n_modes, n_candidates=10000, n_best
         min_eig = np.min(np.linalg.eigvalsh(W))
         sTr1, _ = sTr(Z1, n_modes)
         sTr2, _ = sTr(Z2, n_modes)
-        sTr_sum = sTr1 + sTr2
 
-        # score: want high sTr, close to steering boundary, close to PSD
-        steering_penalty = abs(f_k - 0.999)  # close to boundary from either side
-        psd_penalty = abs(min(min_eig, 0)) * 10  # penalize negative eigenvalues
-        str_penalty = abs(min(sTr_sum - 0.5, 0)) * 10
+        if sTr1 is None or sTr2 is None:
+            continue
+        else:
+            sTr_sum = sTr1 + sTr2
 
-        score = steering_penalty + psd_penalty + str_penalty
+            # score: want high sTr, close to steering boundary, close to PSD
+            steering_penalty = abs(f_k - 0.999)  # close to boundary from either side
+            psd_penalty = abs(min(min_eig, 0)) * 10  # penalize negative eigenvalues
+            str_penalty = abs(min(sTr_sum - 0.5, 0)) * 10
+
+            score = steering_penalty + psd_penalty + str_penalty
 
         candidates.append((score, w))
 
@@ -480,6 +605,65 @@ def find_good_seeds(M_list, m_list, num_ops, n_modes, n_candidates=10000, n_best
     w0 = np.ones(num_ops) * (1.0 / num_ops)
     seeds.append(w0)
     return seeds
+
+
+def check_constraints(w_opt, M_list, min_val, num_ops=10, n_modes=1, verbose=False):
+    """
+    Verify all constraints are satisfied.
+    """
+    W = np.sum([w_opt[k] * M_list[k] for k in range(num_ops)], axis=0)
+    size = 2 * n_modes
+
+    # Check 1: W ≥ 0 (PSD)
+    eigvals = np.linalg.eigvalsh(W)
+    min_eigval = np.min(np.real(eigvals))
+    W_psd = min_eigval >= -tolerance_psd
+
+    # Check 2: sTr(Z1) + sTr(Z2) ≥ 0.5
+    Z1 = W[0:size, 0:size]
+    Z2 = W[size:2*size, size:2*size]
+
+    sTr_Z1, _ = sTr(Z1, n_modes=n_modes)
+    sTr_Z2, _ = sTr(Z2, n_modes=n_modes)
+
+    if sTr_Z1 is None or sTr_Z2 is None:
+        sTr_satisfied = False
+    else:
+        sTr_sum = sTr_Z1 + sTr_Z2
+        sTr_satisfied = sTr_sum >= 0.5 - tolerance_sTr
+
+    steering_ok = min_val < 1.0 - tolerance_steering
+
+    results = {
+        'min_eigval_W': min_eigval,
+        'W_is_PSD': W_psd,
+        'sTr_sum': sTr_sum,
+        'sTr_satisfied': sTr_satisfied,
+        'steering_satisfied': steering_ok,
+        'objective_value': min_val,
+        'all_constraints_ok': W_psd and sTr_satisfied and steering_ok
+    }
+
+    if verbose:
+        print("\n" + "="*50)
+        print(f"{'Condition':30} | {'Value':12} | {'Result'}")
+        print("-" * 50)
+        print(f"{'PSD (Min eigval >= 0)':30} | {min_eigval:12.20f} | {'[OK]' if W_psd else '[FAIL]'}")
+        if sTr_sum is not None:
+            print(f"{'sTr (Sum traces >= 0.5)':30} | {sTr_sum:12.20f} | {'[OK]' if sTr_satisfied else '[FAIL]'}")
+            print(f"{'sTr(Z1)':30} | {sTr_Z1:12.8f} | ")
+            print(f"{'sTr(Z2)':30} | {sTr_Z2:12.8f} | ")
+
+        else:
+            print(f"{'sTr Condition':30} | {'ERROR':12} | [FAIL]")
+        print(f"{'Steering (w·m < 1)':30} | {min_val:12.20f} | {'[OK]' if steering_ok else '[FAIL]'}")
+        print("-" * 50)
+        print(f"OVERALL RESULT: {'FEASIBLE [OK]' if results['all_constraints_ok'] else 'UNFEASIBLE [FAIL]'}")
+        print("="*50 + "\n")
+
+
+    return results
+
 
 def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
     """
@@ -517,11 +701,14 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
         output_frequency = 1
         if stats['eval'] % output_frequency == 0:
             W, Z1, Z2, sTr1, sTr2, g1, g2 = compute_sTr_sum(w)
-            val = sTr1 + sTr2
+            if sTr1 is None or sTr2 is None:
+                val = -1*np.inf
+            else:
+                val = sTr1 + sTr2
             f = np.dot(w, m_list)
             W = np.sum([w[idx] * M_list[idx] for idx in range(num_ops)], axis=0)
             min_eig = np.min(np.linalg.eigvalsh(W))
-            print(f"\r    Eval: {stats['eval']:7d} | sTr: {val:10.6f} | f: {f:10.6f} | min_eig: {min_eig:+.6f}", end="", flush=True)
+            print(f"\r    Eval: {stats['eval']:7d} | sTr: {val:10.20f} | f: {f:10.20f} | min_eig: {min_eig:+.20f}", end="", flush=True)
         return float(obj)
 
     def constraint_W_psd(w, grad):
@@ -535,13 +722,20 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
         if grad.size > 0:
             for k in range(num_ops):
                 grad[k] = -float(np.real(v_min.conj().T @ M_list[k] @ v_min))
-        return float(1e-9 - min_eigval)
+        return float(tolerance_psd - min_eigval)
 
     def constraint_symplectic_trace(w, grad):
         w = np.nan_to_num(w, nan=0.0)
         try:
             W, Z1, Z2, sTr1, sTr2, g1, g2 = compute_sTr_sum(w)
+
+            if sTr1 is None or sTr2 is None:
+                if grad.size > 0:
+                    grad[:] = 0
+                return 10.0
+
             val = 0.5 - (sTr1 + sTr2)
+
             if grad.size > 0 and g1 is not None and g2 is not None:
                 for k in range(num_ops):
                     dk1 = np.trace(g1 @ M_list[k][0:size, 0:size])
@@ -594,9 +788,9 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
     opt = nlopt.opt(nlopt.LD_SLSQP, num_ops)
     opt.set_min_objective(objective)
 
-    opt.add_inequality_constraint(constraint_W_psd, 1e-10)
-    opt.add_inequality_constraint(constraint_symplectic_trace, 1e-10)
-    opt.add_inequality_constraint(constraint_steering, 1e-10)
+    opt.add_inequality_constraint(constraint_W_psd, tolerance_psd)
+    opt.add_inequality_constraint(constraint_symplectic_trace, tolerance_sTr)
+    opt.add_inequality_constraint(constraint_steering, tolerance_steering)
 
     opt.set_lower_bounds(-50 * np.ones(num_ops))
     opt.set_upper_bounds(50 * np.ones(num_ops))
@@ -614,15 +808,18 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
     #     noise = np.random.randn(num_ops) * 0.05
     #     seeds.append(w_global + noise)
 
+
+    print("\nGenerating seeds")
+    # seeds = find_fixed_seeds(M_list, m_list, num_ops, n_modes)
     seeds = find_good_seeds(M_list, m_list, num_ops, n_modes)
+
     if not seeds:
         print("\n" + "="*50)
         print("\nFailed to find good seeds")
         print("\n" + "="*50)
         return best_obj, best_w
 
-
-
+    print("\nStarting optimization")
     for seed_idx, seed in enumerate(seeds):
         try:
             w_res = opt.optimize(seed)
@@ -632,6 +829,9 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
                 if res['W_is_PSD'] and res['sTr_satisfied']:
                     best_obj = f_k
                     best_w = w_res
+                # elif best_w is None:  # fallback: keep best even if marginally infeasible
+                #     best_obj = f_k
+                #     best_w = w_res
 
         except Exception as e:
             print(f"\n  Seed {seed_idx} failed: {e}")
@@ -667,14 +867,20 @@ if __name__ == "__main__":
         for state in range(total_states):
             # Generate new state
             state_g = None
+            print(f"\nGenerating state {state}.")
             while state_g is None:
+                # TODO: change randCM back!!!
+                # state_g = randCM_fixed(entanglement_target, n_modes, seed = state)
                 state_g = randCM(entanglement_target, n_modes)
-            print(f"\nState generated.")
+            print(f"\nState {state} generated.")
+
 
             # Generate measurements for this state
             M_list = measurement_random(n_modes, num_ops)
             m_list = [np.real(np.trace(M @ state_g)) for M in M_list]
             num_ops = len(M_list)
+
+            # state_diagnostics(state_g, m_list, num_ops)
 
             for attempt in range(max_attempts):
                 print(f"  Attempt {attempt+1}/{max_attempts} ({num_ops} operators)...")
