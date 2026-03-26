@@ -1,6 +1,8 @@
 import traceback
 import numpy as np
 import nlopt
+import os
+import time
 import math
 import random
 import matplotlib.pyplot as plt
@@ -291,7 +293,6 @@ def rand_rsymp(n,c):
     return U @ np.diag(s) @ V
 
 def randCM(entg=1, n_modes=1):
-    # TODO: change things here to be like randCM _fixed parameters
     """Searches for a random state with a specific entanglement level for 2*n_modes.
     Parameters:
         entg: entanglement level
@@ -698,7 +699,7 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
                 grad[:] = 0
 
         stats['eval'] += 1
-        output_frequency = 1
+        output_frequency = 1000
         if stats['eval'] % output_frequency == 0:
             W, Z1, Z2, sTr1, sTr2, g1, g2 = compute_sTr_sum(w)
             if sTr1 is None or sTr2 is None:
@@ -708,7 +709,7 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
             f = np.dot(w, m_list)
             W = np.sum([w[idx] * M_list[idx] for idx in range(num_ops)], axis=0)
             min_eig = np.min(np.linalg.eigvalsh(W))
-            print(f"\r    Eval: {stats['eval']:7d} | sTr: {val:10.20f} | f: {f:10.20f} | min_eig: {min_eig:+.20f}", end="", flush=True)
+            print(f"\n    Eval: {stats['eval']:7d} | sTr: {val:10.20f} | f: {f:10.20f} | min_eig: {min_eig:+.20f}", end="", flush=True)
         return float(obj)
 
     def constraint_W_psd(w, grad):
@@ -797,7 +798,7 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
 
     opt.set_xtol_rel(1e-20)
     opt.set_ftol_rel(1e-20)
-    opt.set_maxeval(20000)
+    opt.set_maxeval(2000000)
 
     best_w = None
     best_obj = np.inf
@@ -811,7 +812,11 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
 
     print("\nGenerating seeds")
     # seeds = find_fixed_seeds(M_list, m_list, num_ops, n_modes)
-    seeds = find_good_seeds(M_list, m_list, num_ops, n_modes)
+    start_time_seeds = time.time()
+    seeds = find_good_seeds(M_list, m_list, num_ops, n_modes, n_candidates = 100000)
+    end_time_seeds = time.time()
+    print(f"\nSeeds generated. time {end_time_seeds - start_time_seeds}s")
+
 
     if not seeds:
         print("\n" + "="*50)
@@ -820,6 +825,7 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
         return best_obj, best_w
 
     print("\nStarting optimization")
+    start_time_opt = time.time()
     for seed_idx, seed in enumerate(seeds):
         try:
             w_res = opt.optimize(seed)
@@ -836,7 +842,8 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
         except Exception as e:
             print(f"\n  Seed {seed_idx} failed: {e}")
             continue
-
+    end_time_opt = time.time()
+    print(f"\nOptimization time {end_time_opt - start_time_opt}s")
     # visualiser_wrapper(opt, w_res)
     return best_obj, best_w
 
@@ -846,8 +853,8 @@ if __name__ == "__main__":
     parser.add_argument("-e", "--entanglement", type=int, default=1, help="Target entanglement level (default: 1)")
     parser.add_argument("-no", "--num_ops", type=int, default=10, help="Number of measurement operators")
     parser.add_argument("-ma", "--max_attempts", type=int, default=1, help="Max optimization attempts per state (default: 1)")
-    parser.add_argument("-ts", "--total_states", type=int, default=10, help="Total number of states to check(default: 100)")
-
+    parser.add_argument("-ts", "--total_states", type=int, default=100, help="Total number of states to check(default: 100)")
+    parser.add_argument("--worker_id", type=int, default=0, help="Worker ID for parallel runs")
 
     args = parser.parse_args()
     n_modes = args.n_modes
@@ -856,23 +863,25 @@ if __name__ == "__main__":
     max_attempts = args.max_attempts
     total_states = args.total_states
 
-    filename = f"output/multiple_states_ent{entanglement_target}.csv"
+    filename = f"output/multiple_states_ent{entanglement_target}_worker{args.worker_id}.csv"
     with open(filename, "w") as f:
-        f.write("state index, f\n")
+        # f.write("state index, f\n")
         # Calculate ideal
-        ideal_f = 2**(-entanglement_target/5)
-        f.write(f"ideal, {ideal_f}\n")
+        # ideal_f = 2**(-entanglement_target/5)
+        # f.write(f"ideal, {ideal_f}\n")
 
 
         for state in range(total_states):
+            start_time_total = time.time()
             # Generate new state
             state_g = None
             print(f"\nGenerating state {state}.")
+            start_time_state = time.time()
             while state_g is None:
-                # TODO: change randCM back!!!
                 # state_g = randCM_fixed(entanglement_target, n_modes, seed = state)
                 state_g = randCM(entanglement_target, n_modes)
-            print(f"\nState {state} generated.")
+            end_time_state = time.time()
+            print(f"\nState {state} generated. time {end_time_state - start_time_state}s")
 
 
             # Generate measurements for this state
@@ -885,11 +894,17 @@ if __name__ == "__main__":
             for attempt in range(max_attempts):
                 print(f"  Attempt {attempt+1}/{max_attempts} ({num_ops} operators)...")
                 min_val, w_opt = steering_detection(M_list, m_list, num_ops, n_modes)
+
                 if min_val is not inf:
                     print(f"\nSteering detected for {num_ops} measurements using entanglement level {entanglement_target}.")
                 else:
                     print(f"\nOptimization failed for {num_ops} measurements using entanglement level {entanglement_target}.")
                 f.write(f"{state},{min_val}\n")
+                if state % 10 == 9:
+                    f.flush()
+            end_time_total = time.time()
+            print(f"\nTotal time state {state}: {end_time_total - start_time_total}s")
+
 
 
 
