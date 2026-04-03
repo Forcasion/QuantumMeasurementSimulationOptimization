@@ -4,31 +4,50 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="c0a884c6-b90b-4b8b-a811-3ed8eb767e75" name="Changes" comment="LD_SLSQP converging">
-      <change beforePath="$PROJECT_DIR$/.idea/QuantumMeasurementSimulationOptimization.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/QuantumMeasurementSimulationOptimization.iml" afterDir="false" />
+    <list default="true" id="c0a884c6-b90b-4b8b-a811-3ed8eb767e75" name="Changes" comment="added visualizer; fixed sTr penalty">
+      <change afterPath="$PROJECT_DIR$/bin/ascending_measurements_solver.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bin/measurement_generation.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bin/state_generation.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bin/static_measurements_solver.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bin/steering_detection.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bin/visualiser.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/success_rate.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/main_notebook.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/main_notebook.ipynb" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/batch_running_optimizer.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/find_min_ops.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/main_notebook.ipynb" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/plot_success_rate_3d.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/run_script_batch_running.py" beforeDir="false" afterPath="$PROJECT_DIR$/run_script_static.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/single_state_different_entanglement_optimization.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/statistical_observations.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/steering_detection.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/test_s_matrix.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_randCM.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_randCM.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="GitHubPullRequestSearchHistory">{
-  &quot;lastFilter&quot;: {
-    &quot;state&quot;: &quot;OPEN&quot;,
-    &quot;assignee&quot;: &quot;Forcasion&quot;
+  &quot;lastFilter&quot;: {}
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/Forcasion/QuantumMeasurementSimulationOptimization&quot;,
+    &quot;accountId&quot;: &quot;b8885df1-00de-4f2e-904a-2055d6fb3690&quot;
   }
 }</component>
-  <component name="GithubPullRequestsUISettings"><![CDATA[{
-  "selectedUrlAndAccountId": {
-    "url": "https://github.com/Forcasion/QuantumMeasurementSimulationOptimization",
-    "accountId": "b8885df1-00de-4f2e-904a-2055d6fb3690"
-  }
-}]]></component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 3
 }</component>
@@ -39,22 +58,50 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "Python.ascending_entanglement_solver.executor": "Run",
+    "Python.ascending_measurements_solver.executor": "Run",
+    "Python.batch_running_optimizer.executor": "Run",
+    "Python.plot_success_rate_3d.executor": "Run",
+    "Python.run_script_batch_running.executor": "Run",
+    "Python.run_script_static.executor": "Run",
+    "Python.single_state_different_entanglement_optimization.executor": "Run",
+    "Python.static_entanglement_solver.executor": "Run",
+    "Python.statistical_observations.executor": "Run",
+    "Python.steering_detection.executor": "Run",
+    "Python.success_rate.executor": "Run",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
     "RunOnceActivity.git.unshallow": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
     "git-widget-placeholder": "master",
+    "last_opened_file_path": "/home/andrei/PycharmProjects/QuantumMeasurementSimulationOptimization/storage/case9",
     "node.js.detected.package.eslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
     "node.js.selected.package.tslint": "(autodetect)",
-    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable",
+    "settings.editor.selected.configurable": "reference.settings.ide.settings.file-colors",
     "vue.rearranger.settings.migration": "true"
   }
 }]]></component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/storage/case9" />
+      <recent name="$PROJECT_DIR$/storage/case8" />
+      <recent name="$PROJECT_DIR$/storage/case7" />
+      <recent name="$PROJECT_DIR$/storage/case6" />
+      <recent name="$PROJECT_DIR$/storage/case5" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/bin" />
+      <recent name="$PROJECT_DIR$/bins" />
+      <recent name="$PROJECT_DIR$/storage/case9" />
+      <recent name="$PROJECT_DIR$/storage/case7" />
+      <recent name="$PROJECT_DIR$/storage/case6" />
+    </key>
+  </component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
-        <option value="bundled-python-sdk-4762d8aabb82-6d6dccd035ac-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-253.30387.173" />
+        <option value="bundled-python-sdk-1cd77e80b48f-6d6dccd035ac-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-253.32098.74" />
       </set>
     </attachedChunks>
   </component>
@@ -75,7 +122,23 @@
       <option name="project" value="LOCAL" />
       <updated>1771167979833</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="minor changes">
+      <option name="closed" value="true" />
+      <created>1773767581453</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1773767581454</updated>
+    </task>
+    <task id="LOCAL-00003" summary="added visualizer; fixed sTr penalty">
+      <option name="closed" value="true" />
+      <created>1773774162133</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1773774162133</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -86,7 +149,24 @@
       <map>
         <entry key="MAIN">
           <value>
-            <State />
+            <State>
+              <option name="CUSTOM_BOOLEAN_PROPERTIES">
+                <map>
+                  <entry key="Show.Git.Branches" value="true" />
+                </map>
+              </option>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="origin/master" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+            </State>
           </value>
         </entry>
       </map>
@@ -95,6 +175,15 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="stable" />
     <MESSAGE value="LD_SLSQP converging" />
-    <option name="LAST_COMMIT_MESSAGE" value="LD_SLSQP converging" />
+    <MESSAGE value="minor changes" />
+    <MESSAGE value="added visualizer; fixed sTr penalty" />
+    <option name="LAST_COMMIT_MESSAGE" value="added visualizer; fixed sTr penalty" />
+  </component>
+  <component name="XDebuggerManager">
+    <watches-manager>
+      <configuration name="PythonConfigurationType">
+        <watch expression="num_ops" language="Python" />
+      </configuration>
+    </watches-manager>
   </component>
 </project>

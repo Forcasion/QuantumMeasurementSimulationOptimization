@@ -2,15 +2,13 @@ import subprocess
 import os
 import time
 
-
-NUM_WORKERS = 2
-TOTAL_STATES = 20
-STATES_PER_WORKER = TOTAL_STATES // NUM_WORKERS
+NUM_WORKERS = 39
+TOTAL_STATES = 20000
+STATES_PER_WORKER = TOTAL_STATES // NUM_WORKERS +1
 
 # Common args
 N_MODES = 1
 ENTANGLEMENT = 1
-NUM_OPS = 10
 MAX_ATTEMPTS = 1
 
 os.makedirs("logs", exist_ok=True)
@@ -23,12 +21,11 @@ for i in range(NUM_WORKERS):
     log_file = open(f"logs/worker_{i}.log", "w")
     p = subprocess.Popen(
         [
-            "python", "batch_running_optimizer.py",
+            "/home/andrei/.conda/envs/QuantumMeasurementSimulationOptimization/bin/python", "bin/ascending_measurements_solver.py",
             "--worker_id", str(i),
             "--total_states", str(STATES_PER_WORKER),
             "--n_modes", str(N_MODES),
             "--entanglement", str(ENTANGLEMENT),
-            "--num_ops", str(NUM_OPS),
             "--max_attempts", str(MAX_ATTEMPTS),
         ],
         stdout=log_file,
