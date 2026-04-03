@@ -22,7 +22,9 @@ if __name__ == "__main__":
     max_attempts = args.max_attempts
     total_states = args.total_states
 
-    fileobject = open(os.path.join(os.pardir, f"output/ascending_ent{entanglement_target}_worker{args.worker_id}.csv"), "w")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_path = os.path.join(script_dir, os.pardir, "output", f"ascending_ent{entanglement_target}_worker{args.worker_id}.csv")
+    fileobject = open(output_path, "w")
 
     with fileobject as f:
         for state in range(total_states):

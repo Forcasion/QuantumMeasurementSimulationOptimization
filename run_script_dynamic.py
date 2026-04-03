@@ -49,7 +49,7 @@ print("All workers done.")
 merged = f"output/multiple_states_ent{ENTANGLEMENT}_merged.csv"
 with open(merged, "w") as out:
     for i in range(NUM_WORKERS):
-        worker_file = f"output/multiple_states_ent{ENTANGLEMENT}_worker{i}.csv"
+        worker_file = f"output/ascending_ent{ENTANGLEMENT}_worker{i}.csv"
         with open(worker_file) as f:
             lines = f.readlines()
             if i == 0:
