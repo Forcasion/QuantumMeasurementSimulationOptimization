@@ -10,8 +10,8 @@ import argparse
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Quantum Steering Detection")
-    parser.add_argument("-nm", "--n_modes", type=int, default=1, help="Number of modes per block (default: 1)")
-    parser.add_argument("-e", "--entanglement", type=int, default=1, help="Target entanglement level (default: 1)")
+    parser.add_argument("-nm", "--n_modes", type=int, default=1, help="Number of modes per block (matrix size) (default: 1)")
+    parser.add_argument("-e", "--entanglement", type=float, default=1.1, help="Target entanglement level (default: 1.0)")
     parser.add_argument("-ma", "--max_attempts", type=int, default=1, help="Max optimization attempts per state (default: 1)")
     parser.add_argument("-ts", "--total_states", type=int, default=1, help="Total number of states to check(default: 100)")
     parser.add_argument("--worker_id", type=int, default=0, help="Worker ID for parallel runs")
@@ -22,7 +22,9 @@ if __name__ == "__main__":
     max_attempts = args.max_attempts
     total_states = args.total_states
 
-    fileobject = open(os.path.join(os.pardir, f"output/ascending_ent{entanglement_target}_worker{args.worker_id}.csv"), "w")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_path = os.path.join(script_dir, os.pardir, "output", f"ascending_ent{entanglement_target}_worker{args.worker_id}.csv")
+    fileobject = open(output_path, "w")
 
     with fileobject as f:
         for state in range(total_states):
@@ -54,6 +56,8 @@ if __name__ == "__main__":
                         break
                     else:
                         print(f"\nOptimization failed for entanglement level {entanglement_target} using {num_ops} measurements.")
+                if detected_steering:
+                    break
 
 
             f.write(f"{state},{num_ops},{min_val}\n")

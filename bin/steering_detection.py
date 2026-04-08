@@ -1,6 +1,8 @@
 import nlopt
 import numpy as np
 import time
+from scipy.linalg import block_diag
+
 
 # Tolerances
 
@@ -318,7 +320,7 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
     print("\nGenerating seeds")
     # seeds = find_fixed_seeds(M_list, m_list, num_ops, n_modes)
     start_time_seeds = time.time()
-    seeds = find_good_seeds(M_list, m_list, num_ops, n_modes, n_candidates = 1000)
+    seeds = find_good_seeds(M_list, m_list, num_ops, n_modes, n_candidates = 10000)
     end_time_seeds = time.time()
     print(f"\nSeeds generated. time {end_time_seeds - start_time_seeds}s")
 
