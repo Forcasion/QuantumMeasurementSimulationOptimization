@@ -1,3 +1,11 @@
+"""
+Script that gives parallel tasks to run ascending measurements solver for multiple entanglements
+and merge the output for each entanglement in summary/ascending_ent{ENTANGLEMENT}_merged.csv
+
+simple: str(Z1)+str(Z2) >= 1/2
+"""
+
+
 import subprocess
 import numpy as np
 import os
@@ -25,7 +33,7 @@ for ENTANGLEMENT in entanglement_list:
         log_file = open(f"logs/worker_{i}.log", "w")
         p = subprocess.Popen(
             [
-                "/home/andrei/.conda/envs/QuantumMeasurementSimulationOptimization/bin/python", "bin/ascending_measurements_solver.py",
+                "/home/andrei/.conda/envs/QuantumMeasurementSimulationOptimization/bin/python", "bin/ascending_measurements_solver_simple.py",
                 "--worker_id", str(i),
                 "--total_states", str(STATES_PER_WORKER),
                 "--n_modes", str(N_MODES),

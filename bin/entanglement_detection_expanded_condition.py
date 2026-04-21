@@ -199,7 +199,7 @@ def find_fixed_seeds(M_list, m_list, num_ops, n_modes, n_candidates=10000, n_bes
         w0 * 2]
     return seeds
 
-def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
+def entanglement_detection(M_list, m_list, num_ops=14, n_modes=1):
     """
     Detect steering using a robust direct optimizer.
     Feasibility problem: find c >= 0 such that:
@@ -269,7 +269,7 @@ def steering_detection(M_list, m_list, num_ops=14, n_modes=1):
                     grad[:] = 0
                 return 10.0
 
-            val = 0.5 - (sTr1 + sTr2)
+            val = 0.5 - (sTr1 * sTr2) # HERE!!!!
 
             if grad.size > 0 and g1 is not None and g2 is not None:
                 for k in range(num_ops):

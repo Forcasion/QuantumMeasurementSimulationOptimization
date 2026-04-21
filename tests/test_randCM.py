@@ -4,7 +4,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from bin.steering_detection import randCM, sTr
+from bin.entanglement_detection import randCM, sTr
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

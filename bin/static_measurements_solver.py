@@ -1,7 +1,7 @@
 import numpy as np
 import time
 import os
-from steering_detection import steering_detection
+from entanglement_detection import entanglement_detection
 from state_generation import randCM
 from measurement_generation import measurement_random
 
@@ -46,7 +46,7 @@ if __name__ == "__main__":
 
             for attempt in range(max_attempts):
                 print(f"  Attempt {attempt+1}/{max_attempts} ({num_ops} operators)...")
-                min_val, w_opt = steering_detection(M_list, m_list, num_ops, n_modes)
+                min_val, w_opt = entanglement_detection(M_list, m_list, num_ops, n_modes)
 
                 if min_val is not inf:
                     print(f"\nSteering detected for {num_ops} measurements using entanglement level {entanglement_target}.")
