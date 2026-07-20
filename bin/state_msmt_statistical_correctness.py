@@ -3,7 +3,7 @@
 import numpy as np
 import time
 import os
-from entanglement_detection_expanded_condition import entanglement_detection
+from entanglement_detection import entanglement_detection, check_constraints
 from state_generation import randCM
 from measurement_generation import measurement_random
 
@@ -17,7 +17,7 @@ if __name__ == "__main__":
     parser.add_argument("-ma", "--max_attempts", type=int, default=1, help="Max optimization attempts per state (default: 1)")
     parser.add_argument("-ts", "--total_states", type=int, default=1, help="Total number of states to check(default: 100)")
     parser.add_argument("--worker_id", type=int, default=0, help="Worker ID for parallel runs")
-    parser.add_argument("--alternate_states", type=int, default=1000, help="Number of states checked against")
+    parser.add_argument("--alternate_states", type=int, default=20000, help="Number of states checked against")
 
     args = parser.parse_args()
     n_modes = args.n_modes
@@ -25,10 +25,6 @@ if __name__ == "__main__":
     max_attempts = args.max_attempts
     total_states = args.total_states
     total_alternate_states = args.alternate_states
-
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_path = os.path.join(script_dir, os.pardir, "output", f"ascending_ent{entanglement_target}_worker{args.worker_id}.csv")
-    fileobject = open(output_path, "w")
 
     for state in range(total_states):
         start_time_total = time.time()
@@ -61,17 +57,21 @@ if __name__ == "__main__":
                     print(f"\nOptimization failed for entanglement level {entanglement_target} using {num_ops} measurements.")
             if detected_steering:
                 break
-
+        count = 0
         if detected_steering:
             for state in range(total_alternate_states):
                 state_g_temp = None
-                print(f"\nGenerating alternate state {state}.")
+                print(f"\nChecking alternate state {state+1}/{total_alternate_states}.")
                 while state_g_temp is None:
                     state_g_temp = randCM(entanglement_target, n_modes)
                 m_list = [np.real(np.trace(M @ state_g_temp)) for M in M_list] #this M_list is the one that stopped in the num_ops loop
                 num_ops = len(M_list)
                 obj = np.dot(w_opt, m_list) #w_opt is the one from the same loop
-                print(f"\n{obj}")
+                res = check_constraints(w_opt, M_list, obj, num_ops, n_modes, verbose=False)
+                if res['all_constraints_ok']:
+                    print()
+                    count = count +1
+            print(f"Solution is also applicable for {count}/{total_alternate_states} states.")
         else:
             print("Initial optimization failed")
 

@@ -1,10 +1,13 @@
 import numpy as np
 import time
 import os
-# Warning!
-from entanglement_detection_proposition_5 import entanglement_detection
-from state_generation import randCM
-from measurement_generation import measurement_random
+import sys
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from bin.entanglement_detection_proposition_5 import entanglement_detection
+from bin.state_generation import randCM
+from bin.measurement_generation import measurement_random
 
 from numpy import *
 import argparse
@@ -24,6 +27,9 @@ if __name__ == "__main__":
     num_ops = args.num_ops
     max_attempts = args.max_attempts
     total_states = args.total_states
+
+    output_dir = os.path.join(os.pardir, "output")
+    os.makedirs(output_dir, exist_ok=True)
 
     fileobject = open(os.path.join(os.pardir, f"output/multiple_states_ent{entanglement_target}_worker{args.worker_id}.csv"), "w")
     with fileobject as f:
