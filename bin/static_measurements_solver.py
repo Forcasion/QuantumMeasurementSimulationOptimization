@@ -15,7 +15,7 @@ if __name__ == "__main__":
     parser.add_argument("-e", "--entanglement", type=int, default=1, help="Target entanglement level (default: 1)")
     parser.add_argument("-no", "--num_ops", type=int, default=10, help="Number of measurement operators")
     parser.add_argument("-ma", "--max_attempts", type=int, default=1, help="Max optimization attempts per state (default: 1)")
-    parser.add_argument("-ts", "--total_states", type=int, default=100, help="Total number of states to check(default: 100)")
+    parser.add_argument("-ts", "--total_states", type=int, default=1, help="Total number of states to check(default: 100)")
     parser.add_argument("--worker_id", type=int, default=0, help="Worker ID for parallel runs")
 
     args = parser.parse_args()

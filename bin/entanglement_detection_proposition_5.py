@@ -28,7 +28,7 @@ from scipy.linalg import block_diag
 # Tolerances
 
 tolerance_psd = 1e-10
-tolerance_sTr = 1e-10
+tolerance_witness = 1e-10
 tolerance_steering = 1e-10
 
 tolerance_x = 1e-20
@@ -88,6 +88,28 @@ def get_S(Z):
 
     return S
 
+def compute_Pz(W):
+    """Helper: compute Pz, Zx, Zp, Zxp from W."""
+
+    # Build the px pp matrices to use later
+    px = np.identity(len(W))
+    pp = np.identity(len(W))
+
+    for i in range(int(len(W)/2)):
+        px[2*i-1][2*i-1] = 0
+
+    for i in range(int(len(W)/2)):
+        pp[2*i][2*i] = 0
+
+    zx = px @ W @ px
+    zp = pp @ W @ pp
+    zxp = px @ W @ pp + pp @ W @ px
+
+    tzx, tzp, tzxp = np.trace(zx), np.trace(zp), np.trace(zxp)
+    pz = tzx * tzp + 0.5 * tzxp - 0.25 * tzxp ** 2
+
+    return pz, zx, zp, zxp, px, pp
+
 def sTr(Z, n_modes=1):
     """Compute symplectic trace sTr(Z) = sum of symplectic eigenvalues.
     For n_modes=1: sTr(Z) = sqrt(det(Z))
@@ -130,29 +152,24 @@ def check_constraints(w_opt, M_list, min_val, num_ops=10, n_modes=1, verbose=Fal
     min_eigval = np.min(np.real(eigvals))
     W_psd = min_eigval >= -tolerance_psd
 
-    # Check 2: sTr(Z1) + sTr(Z2) ≥ 0.5
-    Z1 = W[0:size, 0:size]
-    Z2 = W[size:2*size, size:2*size]
+    # Check 2: witness Pz(gamma) < 1/4
+    pz, _, _, _, _, _ = compute_Pz(W)
 
-    sTr_Z1, _ = sTr(Z1, n_modes=n_modes)
-    sTr_Z2, _ = sTr(Z2, n_modes=n_modes)
-
-    if sTr_Z1 is None or sTr_Z2 is None:
-        sTr_satisfied = False
+    if pz is None:
+        witness_respected = False
     else:
-        sTr_sum = sTr_Z1 + sTr_Z2
-        sTr_satisfied = sTr_sum >= 0.5 - tolerance_sTr
+        witness_respected = pz <= 0.25 - tolerance_witness
 
     steering_ok = min_val < 1.0 - tolerance_steering
 
     results = {
         'min_eigval_W': min_eigval,
         'W_is_PSD': W_psd,
-        'sTr_sum': sTr_sum,
-        'sTr_satisfied': sTr_satisfied,
+        'Pz': pz,
+        'witness_respected': witness_respected,
         'steering_satisfied': steering_ok,
         'objective_value': min_val,
-        'all_constraints_ok': W_psd and sTr_satisfied and steering_ok
+        'all_constraints_ok': W_psd and witness_respected and steering_ok
     }
 
     if verbose:
@@ -160,10 +177,8 @@ def check_constraints(w_opt, M_list, min_val, num_ops=10, n_modes=1, verbose=Fal
         print(f"{'Condition':30} | {'Value':12} | {'Result'}")
         print("-" * 50)
         print(f"{'PSD (Min eigval >= 0)':30} | {min_eigval:12.20f} | {'[OK]' if W_psd else '[FAIL]'}")
-        if sTr_sum is not None:
-            print(f"{'sTr (Sum traces >= 0.5)':30} | {sTr_sum:12.20f} | {'[OK]' if sTr_satisfied else '[FAIL]'}")
-            print(f"{'sTr(Z1)':30} | {sTr_Z1:12.8f} | ")
-            print(f"{'sTr(Z2)':30} | {sTr_Z2:12.8f} | ")
+        if pz is not None:
+            print(f"{'Pz (<= 0.25)':30} | {pz:12.20f} | {'[OK]' if witness_respected else '[FAIL]'}")
 
         else:
             print(f"{'sTr Condition':30} | {'ERROR':12} | [FAIL]")
@@ -177,30 +192,24 @@ def check_constraints(w_opt, M_list, min_val, num_ops=10, n_modes=1, verbose=Fal
 
 def find_good_seeds(M_list, m_list, num_ops, n_modes, n_candidates=1000, n_best=4):
     # For good results n_candidates = 1000000 or more
-    size = 2 * n_modes
     candidates = []
 
     for _ in range(n_candidates):
         w = np.random.randn(num_ops) * 0.5
         f_k = np.dot(w, m_list)
-
         W = np.sum([w[idx] * M_list[idx] for idx in range(num_ops)], axis=0)
-        Z1 = W[0:size, 0:size]
-        Z2 = W[size:2 * size, size:2 * size]
+
+        pz, _, _, _, _, _ = compute_Pz(W)
 
         min_eig = np.min(np.linalg.eigvalsh(W))
-        sTr1, _ = sTr(Z1, n_modes)
-        sTr2, _ = sTr(Z2, n_modes)
 
-        if sTr1 is None or sTr2 is None:
+        if pz is None:
             continue
         else:
-            sTr_sum = sTr1 + sTr2
-
             # score: want high sTr, close to steering boundary, close to PSD
             steering_penalty = abs(f_k - 0.999)  # close to boundary from either side
             psd_penalty = abs(min(min_eig, 0)) * 10  # penalize negative eigenvalues
-            str_penalty = abs(min(sTr_sum - 0.5, 0)) * 10
+            str_penalty = abs(min(pz - 0.25, 0)) * 10
 
             score = steering_penalty + psd_penalty + str_penalty
 
@@ -242,28 +251,6 @@ def entanglement_detection(M_list, m_list, num_ops=14, n_modes=1):
         sTr2, g2 = sTr(Z2, n_modes)
         return W, Z1, Z2, sTr1, sTr2, g1, g2
 
-    def compute_Pz(w):
-        """Helper: compute Z(W), Pz, Zx, Zp, Zxp from weights."""
-        Z = np.sum([w[idx] * M_list[idx] for idx in range(num_ops)], axis=0)
-
-        # Build the px pp matrices to use later
-        px = np.identity(len(Z))
-        pp = np.identity(len(Z))
-
-        for i in range(int(len(Z)/2)):
-            px[2*i-1][2*i-1] = 0
-
-        for i in range(int(len(Z)/2)):
-            pp[2*i][2*i] = 0
-
-        zx = np.matmul(np.matmul(px, Z),px)
-        zp = np.matmul(np.matmul(pp, Z),pp)
-        zxp = np.matmul(np.matmul(px, Z),pp) + np.matmul(np.matmul(pp, Z),px)
-
-        pz = np.trace(zx)*np.trace(zp) + 1/2 * np.trace(zxp) - 1/4 * np.trace(zxp)**2
-
-        return Z, pz, zx, zp, zxp, px, pp
-
     def objective(w, grad):
         w = np.nan_to_num(w, nan=0.0)
         try:
@@ -278,7 +265,8 @@ def entanglement_detection(M_list, m_list, num_ops=14, n_modes=1):
         stats['eval'] += 1
         output_frequency = 1000
         if stats['eval'] % output_frequency == 0:
-            W, pz, _, _, _, _, _  = compute_Pz(w)
+            W = np.sum([w[idx] * M_list[idx] for idx in range(num_ops)], axis=0)
+            pz, _, _, _, _, _  = compute_Pz(W)
 
             if pz is None:
                 val = -1 * np.inf
@@ -287,7 +275,7 @@ def entanglement_detection(M_list, m_list, num_ops=14, n_modes=1):
             f = np.dot(w, m_list)
             W = np.sum([w[idx] * M_list[idx] for idx in range(num_ops)], axis=0)
             min_eig = np.min(np.linalg.eigvalsh(W))
-            print(f"\n    Eval: {stats['eval']:7d} | sTr: {val:10.20f} | f: {f:10.20f} | min_eig: {min_eig:+.20f}", end="", flush=True)
+            print(f"\n    Eval: {stats['eval']:7d} | witness (<0.25): {val:10.20f} | f: {f:10.20f} | min_eig: {min_eig:+.20f}", end="", flush=True)
         return float(obj)
 
     def constraint_W_psd(w, grad):
@@ -306,7 +294,8 @@ def entanglement_detection(M_list, m_list, num_ops=14, n_modes=1):
     def constraint_Pz(w, grad):
         w = np.nan_to_num(w, nan=0.0)
         try:
-            _, pz, zx, zp, zxp, px, pp = compute_Pz(w)
+            W = np.sum([w[k] * M_list[k] for k in range(num_ops)], axis=0)
+            pz, zx, zp, zxp, px, pp = compute_Pz(W)
 
             if pz is None:
                 if grad.size > 0: grad[:] = 0
@@ -343,7 +332,7 @@ def entanglement_detection(M_list, m_list, num_ops=14, n_modes=1):
     opt.set_min_objective(objective)
 
     opt.add_inequality_constraint(constraint_W_psd, tolerance_psd)
-    opt.add_inequality_constraint(constraint_Pz, tolerance_sTr)
+    opt.add_inequality_constraint(constraint_Pz, tolerance_witness)
     opt.add_inequality_constraint(constraint_steering, tolerance_steering)
 
     opt.set_lower_bounds(-50 * np.ones(num_ops))
@@ -385,7 +374,7 @@ def entanglement_detection(M_list, m_list, num_ops=14, n_modes=1):
             f_k = np.dot(w_res, m_list)
             if f_k < best_obj:
                 res = check_constraints(w_res, M_list, f_k, num_ops, n_modes, verbose=False)
-                if res['W_is_PSD'] and res['sTr_satisfied']:
+                if res['all_constraints_ok']:
                     best_obj = f_k
                     best_w = w_res
                 # elif best_w is None:  # fallback: keep best even if marginally infeasible
