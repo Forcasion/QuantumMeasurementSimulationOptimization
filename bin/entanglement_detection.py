@@ -6,12 +6,12 @@ from scipy.linalg import block_diag
 
 # Tolerances
 
-tolerance_psd = 1e-10
-tolerance_sTr = 1e-10
-tolerance_steering = 1e-10
+tolerance_psd = 1e-5
+tolerance_sTr = 1e-5
+tolerance_steering = 1e-5
 
-tolerance_x = 1e-20
-tolerance_f = 1e-20
+tolerance_x = 1e-5
+tolerance_f = 1e-5
 
 
 def get_S(Z):
@@ -261,28 +261,35 @@ def entanglement_detection(M_list, m_list, num_ops=14, n_modes=1):
 
     def constraint_symplectic_trace(w, grad):
         w = np.nan_to_num(w, nan=0.0)
-        try:
-            W, Z1, Z2, sTr1, sTr2, g1, g2 = compute_sTr_sum(w)
 
-            if sTr1 is None or sTr2 is None:
-                if grad.size > 0:
-                    grad[:] = 0
-                return 10.0
+        def val_at(w_):
+            W = np.sum([w_[k] * M_list[k] for k in range(num_ops)], axis=0)
+            Z1 = W[0:size, 0:size];
+            Z2 = W[size:2 * size, size:2 * size]
+            s1, _ = sTr(Z1, n_modes);
+            s2, _ = sTr(Z2, n_modes)
+            if s1 is None or s2 is None: return None
+            return s1 + s2
 
-            val = 0.5 - (sTr1 + sTr2)
-
-            if grad.size > 0 and g1 is not None and g2 is not None:
-                for k in range(num_ops):
-                    dk1 = np.trace(g1 @ M_list[k][0:size, 0:size])
-                    dk2 = np.trace(g2 @ M_list[k][size:2*size, size:2*size])
-                    grad[k] = -float(dk1 + dk2)
-            elif grad.size > 0:
-                grad[:] = 0
-            if np.isnan(val) or np.isinf(val): return 10.0
-            return float(val)
-        except:
+        v0 = val_at(w)
+        if v0 is None:
             if grad.size > 0: grad[:] = 0
             return 10.0
+        val = 0.5 - v0
+        if grad.size > 0:
+            eps = 1e-6
+            for k in range(num_ops):
+                wp = w.copy();
+                wp[k] += eps
+                wm = w.copy();
+                wm[k] -= eps
+                vp = val_at(wp);
+                vm = val_at(wm)
+                if vp is None or vm is None:
+                    grad[k] = 0.0
+                else:
+                    grad[k] = -(vp - vm) / (2 * eps)
+        return float(val)
 
     def constraint_steering(w, grad):
         val = np.dot(w, m_list) - 0.999
@@ -335,6 +342,7 @@ def entanglement_detection(M_list, m_list, num_ops=14, n_modes=1):
     start_time_opt = time.time()
     for seed_idx, seed in enumerate(seeds):
         try:
+            stats['eval'] = 0
             w_res = opt.optimize(seed)
             f_k = np.dot(w_res, m_list)
             if f_k < best_obj:

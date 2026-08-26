@@ -1,12 +1,12 @@
 import numpy as np
 
-def measurement_random(n_modes=1, num_ops=None, seed=None):
+def measurement_random(n_modes, num_ops=None, seed=None):
     """Return a list of random rank-1 measurements for 2*n_modes system."""
     size = 4 * n_modes
     if num_ops is None:
         num_ops = 2 * n_modes * (4 * n_modes + 1)
 
-    rng = np.random.default_rng(seed)  # local RNG, not affected by np.random.seed()
+    rng = np.random.default_rng(seed)
 
     M_list = []
     for _ in range(num_ops):
