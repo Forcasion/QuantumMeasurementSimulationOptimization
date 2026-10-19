@@ -10,9 +10,9 @@ TOTAL_STATES = 20000
 STATES_PER_WORKER = TOTAL_STATES // NUM_WORKERS +1
 
 # Common args
-N_MODES = 1
+N_MODES = 2
 ENTANGLEMENT = 1
-NUM_OPS = 10
+NUM_OPS = 36
 MAX_ATTEMPTS = 1
 
 os.makedirs("logs", exist_ok=True)
@@ -21,6 +21,8 @@ os.makedirs("output", exist_ok=True)
 start_time = time.time()
 
 processes = []
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
 for i in range(NUM_WORKERS):
     log_file = open(f"logs/worker_{i}.log", "w")
     p = subprocess.Popen(
@@ -35,6 +37,7 @@ for i in range(NUM_WORKERS):
         ],
         stdout=log_file,
         stderr=log_file,
+        cwd=PROJECT_ROOT,
     )
     processes.append((p, log_file))
     print(f"Started worker {i} (PID {p.pid})")

@@ -20,10 +20,10 @@ TOTAL_STATES = 20000
 STATES_PER_WORKER = TOTAL_STATES // NUM_WORKERS +1
 
 # Common args
-N_MODES = 1
+N_MODES = 2
 MAX_ATTEMPTS = 1
 
-entanglement_list = np.linspace(2.0, 5.0, num=4)
+entanglement_list = np.linspace(1.0, 5.0, num=5)
 
 for ENTANGLEMENT in entanglement_list:
     start_time = time.time()

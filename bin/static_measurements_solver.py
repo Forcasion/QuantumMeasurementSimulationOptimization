@@ -25,38 +25,46 @@ if __name__ == "__main__":
     max_attempts = args.max_attempts
     total_states = args.total_states
 
-    # fileobject = open(os.path.join(os.pardir, f"output/multiple_states_ent{entanglement_target}_worker{args.worker_id}.csv"), "w")
-    # with fileobject as f:
-    for state in range(total_states):
-        start_time_total = time.time()
-        # Generate new state
-        state_g = None
-        print(f"\nGenerating state {state}.")
-        start_time_state = time.time()
-        while state_g is None:
-            state_g = randCM(entanglement_target, n_modes)
-        end_time_state = time.time()
-        print(f"\nState {state} generated. time {end_time_state - start_time_state}s")
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    OUTPUT_DIR = os.path.join(SCRIPT_DIR, os.pardir, "output")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    fileobject = open(
+        os.path.join(OUTPUT_DIR, f"multiple_states_ent{entanglement_target}_worker{args.worker_id}.csv"),
+        "w"
+    )
+
+    with fileobject as f:
+        for state in range(total_states):
+            start_time_total = time.time()
+            # Generate new state
+            state_g = None
+            print(f"\nGenerating state {state}.")
+            start_time_state = time.time()
+            while state_g is None:
+                state_g = randCM(entanglement_target, n_modes)
+            end_time_state = time.time()
+            print(f"\nState {state} generated. time {end_time_state - start_time_state}s")
 
 
-        # Generate measurements for this state
-        M_list = measurement_random(n_modes, num_ops)
-        m_list = [np.real(np.trace(M @ state_g)) for M in M_list]
-        # num_ops = len(M_list)
+            # Generate measurements for this state
+            M_list = measurement_random(n_modes, num_ops)
+            m_list = [np.real(np.trace(M @ state_g)) for M in M_list]
+            # num_ops = len(M_list)
 
-        for attempt in range(max_attempts):
-            print(f"  Attempt {attempt+1}/{max_attempts} ({num_ops} operators)...")
-            min_val, w_opt = entanglement_detection(M_list, m_list, num_ops, n_modes)
+            for attempt in range(max_attempts):
+                print(f"  Attempt {attempt+1}/{max_attempts} ({num_ops} operators)...")
+                min_val, w_opt = entanglement_detection(M_list, m_list, num_ops, n_modes)
 
-            if min_val is not inf:
-                print(f"\nSteering detected for {num_ops} measurements using entanglement level {entanglement_target}.")
-            else:
-                print(f"\nOptimization failed for {num_ops} measurements using entanglement level {entanglement_target}.")
-            # f.write(f"{state},{min_val}\n")
-            # if state % 10 == 9:
-            #     f.flush()
-        end_time_total = time.time()
-        print(f"\nTotal time state {state}: {end_time_total - start_time_total}s")
+                if min_val is not inf:
+                    print(f"\nSteering detected for {num_ops} measurements using entanglement level {entanglement_target}.")
+                else:
+                    print(f"\nOptimization FAILED(!!!) for {num_ops} measurements using entanglement level {entanglement_target}.")
+                f.write(f"{state},{min_val}\n")
+                if state % 10 == 9:
+                    f.flush()
+            end_time_total = time.time()
+            print(f"\nTotal time state {state}: {end_time_total - start_time_total}s")
 
 
 

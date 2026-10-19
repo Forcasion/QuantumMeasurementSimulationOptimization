@@ -22,9 +22,17 @@ if __name__ == "__main__":
     max_attempts = args.max_attempts
     total_states = args.total_states
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_path = os.path.join(script_dir, os.pardir, "output", f"ascending_ent{entanglement_target}_worker{args.worker_id}.csv")
-    fileobject = open(output_path, "w")
+    d_size = 4*n_modes
+    end_num_ops = d_size*(d_size+1)//2
+
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    OUTPUT_DIR = os.path.join(SCRIPT_DIR, os.pardir, "output")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    fileobject = open(
+        os.path.join(OUTPUT_DIR, f"ascending_ent{entanglement_target}_worker{args.worker_id}.csv"),
+        "w"
+    )
 
     with fileobject as f:
         for state in range(total_states):
@@ -40,7 +48,7 @@ if __name__ == "__main__":
 
             detected_steering = False
 
-            for num_ops in range(1, 11):
+            for num_ops in range(1, end_num_ops+1):
                 # Generate measurements for this state
                 M_list = measurement_random(n_modes, num_ops)
                 m_list = [np.real(np.trace(M @ state_g)) for M in M_list]
