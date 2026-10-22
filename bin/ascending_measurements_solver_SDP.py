@@ -1,0 +1,72 @@
+import numpy as np
+import time
+import os
+from entanglement_sdp import entanglement_detection_sdp
+from state_generation import randCM
+from measurement_generation import measurement_random
+
+from numpy import *
+import argparse
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Quantum Steering Detection")
+    parser.add_argument("-nm", "--n_modes", type=int, default=1, help="Number of modes per block (matrix size) (default: 1)")
+    parser.add_argument("-e", "--entanglement", type=float, default=1, help="Target entanglement level (default: 1.0)")
+    parser.add_argument("-ts", "--total_states", type=int, default=10, help="Total number of states to check(default: 100)")
+    parser.add_argument("--worker_id", type=int, default=0, help="Worker ID for parallel runs")
+
+    args = parser.parse_args()
+    n_modes = args.n_modes
+    entanglement_target = args.entanglement
+    total_states = args.total_states
+
+    d_size = 4*n_modes
+    end_num_ops = d_size*(d_size+1)//2
+
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    OUTPUT_DIR = os.path.join(SCRIPT_DIR, os.pardir, "output")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    fileobject = open(
+        os.path.join(OUTPUT_DIR, f"ascending_ent{entanglement_target}_worker{args.worker_id}.csv"),
+        "w"
+    )
+
+    with fileobject as f:
+        for state in range(total_states):
+            start_time_total = time.time()
+            # Generate new state
+            state_g = None
+            print(f"\nGenerating state {state}.")
+            start_time_state = time.time()
+            while state_g is None:
+                state_g = randCM(entanglement_target, n_modes)
+            end_time_state = time.time()
+            print(f"\nState {state} generated. time {end_time_state - start_time_state}s")
+
+            detected_steering = False
+
+            M_all = measurement_random(n_modes, end_num_ops)
+            m_all = [np.real(np.trace(M @ state_g)) for M in M_all]
+
+            num_found = None
+            for num_ops in range(1, end_num_ops + 1):
+                min_val, w_opt = entanglement_detection_sdp(
+                    M_all[:num_ops], m_all[:num_ops], num_ops, n_modes)
+                if min_val < 1:
+                    print(f"\nSteering detected for entanglement level {entanglement_target} using {num_ops} measurements.")
+                    num_found = num_ops
+                    break
+                else:
+                    print(f"\nOptimization failed for entanglement level {entanglement_target} using {num_ops} measurements.")
+
+            f.write(f"{state},{num_found},{min_val}\n")
+
+            if state % 10 == 9:
+                f.flush()
+            end_time_total = time.time()
+            print(f"\nTotal time state {state}: {end_time_total - start_time_total}s")
+
+
+
+
